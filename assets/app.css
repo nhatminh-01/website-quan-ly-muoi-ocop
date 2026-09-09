@@ -217,3 +217,19 @@ body.sidebar-collapsed{--sidebar-width:78px}
 .ocop-page .btn:disabled{cursor:not-allowed;opacity:.55}
 @media(max-width:1150px){.ocop-page .ocop-metrics,.ocop-page .ocop-workflow{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:620px){.ocop-page .ocop-metrics{gap:10px}.ocop-page .ocop-metric{padding:16px}.ocop-page .ocop-metric strong{font-size:28px}.ocop-page .ocop-workflow,.ocop-page .ocop-form-grid,.ocop-page .ocop-details{grid-template-columns:minmax(0,1fr)}.ocop-page .ocop-steps{display:block}.ocop-page .ocop-steps li{margin-bottom:8px}.ocop-page .ocop-detail-heading{flex-wrap:wrap;gap:4px}.ocop-page .ocop-details{gap:0}}
+/* OCOP phase 2: dynamic criteria catalogue. */
+.ocop-page .ocop-criteria-table strong{font-size:14px;color:#29384d}
+.ocop-page .ocop-criteria-sub{font-size:12px;line-height:1.45;margin-top:4px}
+.ocop-page .ocop-criteria-tree{display:grid;gap:12px}
+.ocop-page .ocop-criteria-node{border:1px solid var(--line);border-radius:10px;padding:16px;background:#fff}
+.ocop-page .ocop-criteria-section{border-left:4px solid var(--primary);background:#fffaf8}
+.ocop-page .ocop-criteria-node-head{display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+.ocop-page .ocop-criteria-node-head h3{font-size:15px;line-height:1.45;margin:3px 0 0;color:#29384d}
+.ocop-page .ocop-criteria-node-head>strong{font-size:14px;color:var(--primary);white-space:nowrap}
+.ocop-page .ocop-criteria-code{display:inline-block;font-size:11px;font-weight:750;letter-spacing:.5px;color:var(--muted)}
+.ocop-page .ocop-criteria-node>p{font-size:13px;color:#526176;line-height:1.6;margin:10px 0 0;white-space:pre-wrap}
+.ocop-page .ocop-criteria-options{list-style:none;margin:12px 0 0;padding:0;border-top:1px solid var(--line)}
+.ocop-page .ocop-criteria-options li{display:flex;justify-content:space-between;gap:14px;padding:10px 0;border-bottom:1px solid var(--line);font-size:13px}
+.ocop-page .ocop-criteria-options li:last-child{border-bottom:0}
+.ocop-page .ocop-criteria-options strong{white-space:nowrap;color:#354258}
+@media(max-width:620px){.ocop-page .ocop-criteria-node-head,.ocop-page .ocop-criteria-options li{flex-direction:column;gap:6px}.ocop-page .ocop-criteria-node-head>strong{white-space:normal}}

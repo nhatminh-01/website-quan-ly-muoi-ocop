@@ -1,4 +1,4 @@
-"""Vietnamese server-rendered pages for the first OCOP implementation phase."""
+"""Vietnamese server-rendered pages for OCOP foundation and dynamic criteria."""
 
 from datetime import date
 from html import escape
@@ -62,7 +62,7 @@ def _filters(query):
     else:
         values = parse_qs(str(query or "").lstrip("?"))
     result = {}
-    for key in ("q", "unit", "year", "status", "group", "page", "page_size"):
+    for key in ("q", "unit", "year", "status", "group", "category", "page", "page_size"):
         value = values.get(key, "")
         if isinstance(value, (list, tuple)):
             value = value[0] if value else ""
@@ -79,7 +79,7 @@ def render(path, query, session, con, helpers):
     """
     clean_path = str(path or "").rstrip("/") or "/"
     if clean_path != "/ocop" and not re.fullmatch(
-        r"/ocop/(entities|products|applications)(?:/(new|\d+)(?:/edit)?)?",
+        r"/ocop/(entities|products|applications)(?:/(new|\d+)(?:/edit)?)?|/ocop/criteria(?:/\d+)?",
         clean_path,
     ):
         return None
@@ -88,6 +88,10 @@ def render(path, query, session, con, helpers):
         return page.overview()
     parts = clean_path.strip("/").split("/")
     kind = parts[1]
+    if kind == "criteria":
+        if len(parts) == 2:
+            return page.criteria_catalog()
+        return page.criteria_detail(int(parts[2]))
     if len(parts) == 2:
         return page.list_page(kind)
     if parts[2] == "new":
@@ -205,12 +209,16 @@ class _Pages:
         fields = ""
         if kind:
             fields += self.input("q", "Từ khóa", f.get("q", ""), attrs='maxlength="200" placeholder="Tên, mã hoặc chủ thể…"')
-        fields += self.unit_field(f.get("unit", ""), True)
+        if kind == "criteria":
+            categories = [(r["name"], r["name"]) for r in svc.criteria_categories(self.con, self.session)]
+            fields += self.select("category", "Nhóm sản phẩm lớn", categories, f.get("category", ""), empty="Tất cả nhóm")
+        else:
+            fields += self.unit_field(f.get("unit", ""), True)
         if kind in (None, "applications"):
             fields += self.input("year", "Năm đánh giá", f.get("year", ""), "number", attrs='min="2000" max="2100" step="1" placeholder="Tất cả năm"')
         if kind == "products":
             fields += self.input("group", "Nhóm sản phẩm", f.get("group", ""), attrs='maxlength="100" placeholder="Tất cả nhóm"')
-        if kind:
+        if kind and kind != "criteria":
             states = ("active", "archived") if kind != "applications" else (
                 "draft", "submitted", "checking", "returned", "eligible", "cancelled"
             )
@@ -275,6 +283,9 @@ class _Pages:
             content += '<p class="muted">Bộ lọc năm áp dụng cho hồ sơ đánh giá. Số chủ thể và sản phẩm tính trong toàn bộ thời gian.</p>'
         content += '<section class="card"><h2 class="ocop-section-heading">Tình trạng xử lý hồ sơ</h2><div class="ocop-workflow">' + workflow + "</div></section>"
         content += (
+            '<section class="card"><div class="ocop-detail-heading"><h2 class="ocop-section-heading">Bộ tiêu chí áp dụng</h2>'
+            + self.link("/ocop/criteria", "Xem 26 bộ tiêu chí", "small") + '</div>'
+            '<p class="muted">Danh mục sản phẩm và khung điểm được quản lý động theo Quyết định 26/2026/QĐ-TTg.</p></section>'
             '<section class="card"><h2 class="ocop-section-heading">Quy trình tiếp nhận hồ sơ</h2>'
             '<ol class="ocop-steps"><li>Tạo chủ thể</li><li>Tạo sản phẩm</li><li>Lập và gửi hồ sơ</li><li>Kiểm tra, bổ sung</li><li>Xác nhận hợp lệ</li></ol>'
             '<p class="muted">Hồ sơ hợp lệ được chuẩn bị cho bước đánh giá tiếp theo. '
@@ -283,6 +294,77 @@ class _Pages:
         scope_name = "tất cả đơn vị" if self.admin else next((r["name"] for r in svc.unit_options(self.con, self.session)), "đơn vị của bạn")
         return self.wrap("Tổng quan OCOP", "Theo dõi chủ thể, sản phẩm và hồ sơ của " + scope_name + ".", content, self.link("/ocop/applications/new", "Tạo hồ sơ", "primary"))
 
+    def criteria_catalog(self):
+        result = svc.list_criteria_sets(self.con, self.session, self.filters)
+        rows = result.get("items", [])
+        table_rows = []
+        for row in rows:
+            classification = self.e(row.get("product_category")) + '<div class="muted ocop-criteria-sub">' + self.e(row.get("product_group")) + '</div>'
+            table_rows.append(
+                '<tr><td><span class="ocop-row-id">' + self.e(row.get("code")) + '</span><strong>'
+                + self.e(row.get("name")) + '</strong></td><td>' + classification + '</td><td>'
+                + self.e(row.get("version")) + '</td><td>' + self.e(row.get("effective_from"))
+                + '</td><td class="right"><strong>' + self.e(row.get("max_score")) + '</strong></td><td>'
+                + self.link('/ocop/criteria/' + str(row["id"]), "Xem", "small") + '</td></tr>'
+            )
+        if not table_rows:
+            table_rows.append('<tr><td colspan="6"><div class="empty">Không có bộ tiêu chí phù hợp.</div></td></tr>')
+        content = (
+            '<div class="notice info"><strong>Danh mục tiêu chí động.</strong> Sản phẩm được gắn với một bộ tiêu chí theo '
+            'Quyết định 26/2026/QĐ-TTg. Cấu trúc được lưu trong cơ sở dữ liệu nên không cần tạo 26 biểu mẫu riêng.</div>'
+            + self.filter_bar("criteria")
+            + '<div class="card"><div class="table-wrap"><table class="summary-table ocop-table ocop-criteria-table"><thead><tr>'
+            '<th>Bộ tiêu chí</th><th>Phân loại</th><th>Phiên bản dữ liệu</th><th>Hiệu lực từ</th><th>Điểm tối đa</th><th>Thao tác</th>'
+            '</tr></thead><tbody>' + ''.join(table_rows) + '</tbody></table></div></div>'
+        )
+        return self.wrap(
+            "Bộ tiêu chí OCOP",
+            f"{result.get('total', 0)} bộ sản phẩm theo Phụ lục II Quyết định 26/2026/QĐ-TTg.",
+            content,
+            self.link("/ocop", "← Tổng quan"),
+        )
+
+    def criteria_detail(self, criteria_id):
+        data = svc.get_criteria_tree(self.con, self.session, criteria_id)
+        row = data["criteria_set"]
+        criteria = data["criteria"]
+        pairs = [
+            ("Mã nội bộ bộ tiêu chí", row.get("code")),
+            ("Tên bộ sản phẩm", row.get("name")),
+            ("Nhóm sản phẩm lớn", row.get("product_category")),
+            ("Nhóm", row.get("product_group")),
+            ("Phân nhóm", row.get("product_subgroup")),
+            ("Văn bản", row.get("legal_document")),
+            ("Phiên bản dữ liệu", row.get("version")),
+            ("Ngày hiệu lực", row.get("effective_from")),
+            ("Điểm tối đa", row.get("max_score")),
+        ]
+        sections = []
+        for item in criteria:
+            score = "—" if item.get("max_score") is None else str(item.get("max_score")).rstrip("0").rstrip(".")
+            options = item.get("options") or []
+            option_html = ""
+            if options:
+                option_html = '<ul class="ocop-criteria-options">' + ''.join(
+                    '<li><span>' + self.e(opt.get("label")) + '</span><strong>' + self.e(opt.get("score")) + ' điểm</strong></li>'
+                    for opt in options
+                ) + '</ul>'
+            sections.append(
+                '<article class="ocop-criteria-node ocop-criteria-' + self.e(item.get("item_type")) + '">'
+                '<div class="ocop-criteria-node-head"><div><span class="ocop-criteria-code">' + self.e(item.get("code")) + '</span>'
+                '<h3>' + self.e(item.get("title")) + '</h3></div><strong>' + self.e(score) + ' điểm</strong></div>'
+                + ('<p>' + self.e(item.get("requirement_text")) + '</p>' if item.get("requirement_text") else '')
+                + option_html + '</article>'
+            )
+        detail_note = (
+            '<div class="notice info"><strong>Giai đoạn 2:</strong> hệ thống đã có 26 bộ tiêu chí và khung điểm A/B/C '
+            'dạng dữ liệu động. Các tiêu chí con, lựa chọn điểm và chấm điểm thành viên Hội đồng sẽ được nạp ở giai đoạn chấm điểm tiếp theo; '
+            'không phát sinh 26 form code riêng.</div>'
+        )
+        content = '<section class="card">' + self.details(pairs) + '</section>' + detail_note
+        content += '<section class="card"><h2 class="ocop-section-heading">Cấu trúc điểm</h2><div class="ocop-criteria-tree">' + ''.join(sections) + '</div></section>'
+        return self.wrap(row.get("code") + " · " + row.get("name"), "Khung bộ tiêu chí OCOP đang áp dụng.", content, self.link("/ocop/criteria", "← Danh mục bộ tiêu chí"))
+
     def list_page(self, kind):
         title, noun, new_label = KINDS[kind]
         result = getattr(svc, "list_" + kind)(self.con, self.session, self.filters)
@@ -290,7 +372,7 @@ class _Pages:
         if kind == "entities":
             headings = ("Mã cơ sở", "Chủ thể", "Loại cơ sở", "Xã/phường", "Trạng thái", "Thao tác")
         elif kind == "products":
-            headings = ("Sản phẩm", "Chủ thể", "Nhóm sản phẩm", "Xã/phường", "Trạng thái", "Thao tác")
+            headings = ("Sản phẩm", "Chủ thể", "Bộ tiêu chí", "Nhóm sản phẩm", "Xã/phường", "Trạng thái", "Thao tác")
         else:
             headings = ("Hồ sơ / Sản phẩm", "Chủ thể", "Xã/phường", "Loại đánh giá", "Năm", "Trạng thái", "Thao tác")
         table_rows = []
@@ -298,7 +380,8 @@ class _Pages:
             if kind == "entities":
                 cells = [self.e(row.get("ma_co_so")), self.e(row.get("name")), self.e(row.get("facility_type")), self.e(row.get("unit_name"))]
             elif kind == "products":
-                cells = [self.e(row.get("name")), self.e(row.get("entity_name")), self.e(row.get("product_group")), self.e(row.get("unit_name"))]
+                criteria_label = (self.e(row.get("criteria_set_code")) + '<div class="muted ocop-criteria-sub">' + self.e(row.get("criteria_set_name") or "Chưa gán") + '</div>') if row.get("criteria_set_id") else '<span class="muted">Chưa gán</span>'
+                cells = [self.e(row.get("name")), self.e(row.get("entity_name")), criteria_label, self.e(row.get("product_group")), self.e(row.get("unit_name"))]
             else:
                 cells = [f'<span class="ocop-row-id">#{self.e(row.get("id"))}</span>{self.e(row.get("product_name"))}', self.e(row.get("entity_name")), self.e(row.get("unit_name")), self.e(EVALUATION_LABELS.get(row.get("evaluation_type"), row.get("evaluation_type"))), self.e(row.get("year"))]
             cells.append(self.badge(row.get("status", "active")))
@@ -323,7 +406,7 @@ class _Pages:
         if self.form_data is not None:
             editable = {
                 "entities": ("name", "facility_type", "ma_don_vi_hanh_chinh", "address", "representative_name", "phone", "email", "tax_code", "website", "description", "updated_at"),
-                "products": ("name", "ma_co_so", "product_group", "description", "updated_at"),
+                "products": ("name", "ma_co_so", "criteria_set_id", "description", "updated_at"),
                 "applications": ("product_id", "evaluation_type", "year", "revision"),
             }
             for field in editable[kind]:
@@ -349,16 +432,20 @@ class _Pages:
             options = [(r["ma_co_so"], r.get("name", "") + " · " + r.get("unit_name", "")) for r in entities]
             if editing and row.get("ma_co_so") and not any(str(v) == str(row["ma_co_so"]) for v, _label in options):
                 options.append((row["ma_co_so"], row.get("entity_name", "Chủ thể hiện tại")))
+            criteria_sets = svc.criteria_set_options(self.con, self.session, active_only=True)
+            criteria_options = [(r["id"], r["code"] + " · " + r["name"]) for r in criteria_sets]
+            if editing and row.get("criteria_set_id") and not any(str(v) == str(row["criteria_set_id"]) for v, _label in criteria_options):
+                criteria_options.append((row["criteria_set_id"], (row.get("criteria_set_code") or "Bộ tiêu chí") + " · " + (row.get("criteria_set_name") or "Bộ tiêu chí hiện tại")))
             fields += self.input("name", "Tên sản phẩm", row.get("name", ""), required=True, attrs='maxlength="255"')
             fields += self.select("ma_co_so", "Chủ thể OCOP", options, row.get("ma_co_so", ""), True)
-            fields += self.input("product_group", "Nhóm sản phẩm", row.get("product_group", ""), required=True, attrs='maxlength="100" placeholder="Ví dụ: Thực phẩm, đồ uống, thủ công mỹ nghệ…"')
+            fields += self.select("criteria_set_id", "Bộ tiêu chí áp dụng", criteria_options, row.get("criteria_set_id", ""), True, "Chọn 1 trong 26 bộ tiêu chí…")
             fields += self.textarea("description", "Mô tả sản phẩm", row.get("description", ""))
-            fields += '<p class="muted ocop-full">Xã/phường của sản phẩm được xác định theo chủ thể đã chọn.</p>'
+            fields += '<p class="muted ocop-full">Xã/phường được xác định theo chủ thể. Nhóm sản phẩm được tự động lấy từ bộ tiêu chí đã chọn.</p>'
             if not options:
                 blocker = '<div class="notice info">Cần có chủ thể đang sử dụng trước khi tạo sản phẩm. <a href="/ocop/entities/new">Tạo chủ thể OCOP</a>.</div>'
         else:
             products = svc.product_options(self.con, self.session)
-            options = [(r["id"], r.get("name", "") + " · " + r.get("entity_name", "")) for r in products]
+            options = [(r["id"], r.get("name", "") + " · " + r.get("entity_name", "") + " · " + (r.get("criteria_set_code") or "chưa có tiêu chí")) for r in products]
             if editing and row.get("product_id") and not any(str(v) == str(row["product_id"]) for v, _label in options):
                 options.append((row["product_id"], row.get("product_name", "Sản phẩm hiện tại")))
             fields += self.select("product_id", "Sản phẩm đăng ký đánh giá", options, row.get("product_id", ""), True)
@@ -368,7 +455,7 @@ class _Pages:
                 fields += '<div class="notice info ocop-full"><strong>Ý kiến kiểm tra:</strong> ' + self.e(row["reviewer_note"]) + "</div>"
             fields += '<p class="muted ocop-full">Hồ sơ được lưu để kiểm tra thông tin trước khi gửi. Chỉ hồ sơ nháp hoặc được yêu cầu bổ sung mới có thể chỉnh sửa.</p>'
             if not options:
-                blocker = '<div class="notice info">Cần có sản phẩm đang sử dụng trước khi tạo hồ sơ. <a href="/ocop/products/new">Tạo sản phẩm OCOP</a>.</div>'
+                blocker = '<div class="notice info">Cần có sản phẩm đang sử dụng và đã gán bộ tiêu chí trước khi tạo hồ sơ. <a href="/ocop/products/new">Tạo sản phẩm OCOP</a>.</div>'
         action = self.url(kind, row, "edit") if editing else self.url(kind, action="new")
         back = self.url(kind, row) if editing else self.url(kind)
         disabled = " disabled" if blocker else ""
@@ -406,14 +493,18 @@ class _Pages:
                 ("Tên sản phẩm", row.get("name")), ("Mã sản phẩm", row.get("ma_san_pham")),
                 ("Chủ thể", row.get("entity_name")), ("Mã cơ sở", row.get("ma_co_so")),
                 ("Xã/phường", row.get("unit_name")), ("Nhóm sản phẩm", row.get("product_group")),
+                ("Bộ tiêu chí", ((row.get("criteria_set_code") or "") + " · " + (row.get("criteria_set_name") or "")).strip(" ·") or "Chưa gán"),
+                ("Nhóm phân loại", row.get("criteria_category")), ("Phiên bản tiêu chí", row.get("criteria_version")),
             ]
         else:
             pairs = [
                 ("Mã hồ sơ", "#" + str(row["id"])), ("Sản phẩm", row.get("product_name")),
                 ("Chủ thể", row.get("entity_name")), ("Xã/phường", row.get("unit_name")),
                 ("Loại đánh giá", EVALUATION_LABELS.get(row.get("evaluation_type"), row.get("evaluation_type"))),
-                ("Năm đánh giá", row.get("year")), ("Ngày gửi", row.get("submitted_at")),
-                ("Ngày kiểm tra", row.get("checked_at")),
+                ("Năm đánh giá", row.get("year")),
+                ("Bộ tiêu chí", ((row.get("criteria_set_code") or "") + " · " + (row.get("criteria_set_name") or "")).strip(" ·") or "Chưa gán"),
+                ("Phiên bản tiêu chí", row.get("criteria_version")),
+                ("Ngày gửi", row.get("submitted_at")), ("Ngày kiểm tra", row.get("checked_at")),
             ]
         pairs.extend([("Ngày tạo", row.get("created_at")), ("Cập nhật gần nhất", row.get("updated_at"))])
         content = '<section class="card"><div class="ocop-detail-heading"><h2 class="ocop-section-heading">Thông tin ' + noun + "</h2>" + self.badge(status) + "</div>" + self.details(pairs)

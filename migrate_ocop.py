@@ -1,11 +1,11 @@
-"""Explicit, test-only entry point for the additive OCOP 1 migration."""
+"""Explicit, test-only entry point for the additive OCOP 1-2 migration."""
 import argparse
 from pathlib import Path
 import sqlite3
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Migration OCOP 1 tren database TEST.")
+    parser = argparse.ArgumentParser(description="Migration OCOP 1-2 tren database TEST.")
     parser.add_argument("--db", required=True)
     args = parser.parse_args()
     path = Path(args.db).resolve(strict=True)

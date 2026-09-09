@@ -145,16 +145,26 @@ ENTITY_SELECT = """SELECT e.*,c.TenCoSo AS name,c.LoaiCoSo AS facility_type,c.Di
     FROM ocop_entities e JOIN DM_CoSo c ON c.Ma_CoSo=e.ma_co_so
     JOIN DM_DonViHanhChinh d ON d.Ma_DonViHanhChinh=c.Ma_DonViHanhChinh"""
 PRODUCT_SELECT = """SELECT p.*,p.ten_san_pham AS name,c.TenCoSo AS entity_name,d.TenDonVi AS unit_name,
-    e.id AS entity_id,e.archived_at AS entity_archived_at
+    e.id AS entity_id,e.archived_at AS entity_archived_at,
+    cs.code AS criteria_set_code,cs.name AS criteria_set_name,cs.product_category AS criteria_category,
+    cs.product_group AS criteria_group,cs.product_subgroup AS criteria_subgroup,
+    cs.legal_document AS criteria_legal_document,cs.version AS criteria_version,
+    cs.effective_from AS criteria_effective_from,cs.active AS criteria_set_active
     FROM ocop_products p JOIN DM_CoSo c ON c.Ma_CoSo=p.ma_co_so
     JOIN ocop_entities e ON e.ma_co_so=p.ma_co_so
-    JOIN DM_DonViHanhChinh d ON d.Ma_DonViHanhChinh=p.ma_don_vi_hanh_chinh"""
+    JOIN DM_DonViHanhChinh d ON d.Ma_DonViHanhChinh=p.ma_don_vi_hanh_chinh
+    LEFT JOIN ocop_criteria_sets cs ON cs.id=p.criteria_set_id"""
 APPLICATION_SELECT = """SELECT a.*,p.ten_san_pham AS product_name,p.ma_san_pham,p.ma_co_so,
     p.ma_don_vi_hanh_chinh,p.product_group,c.TenCoSo AS entity_name,d.TenDonVi AS unit_name,
+    cs.code AS criteria_set_code,cs.name AS criteria_set_name,cs.product_category AS criteria_category,
+    cs.product_group AS criteria_group,cs.product_subgroup AS criteria_subgroup,
+    cs.legal_document AS criteria_legal_document,cs.version AS criteria_version,
+    cs.effective_from AS criteria_effective_from,cs.active AS criteria_set_active,
     u.username AS reviewer_name
     FROM ocop_applications a JOIN ocop_products p ON p.id=a.product_id
     JOIN DM_CoSo c ON c.Ma_CoSo=p.ma_co_so
     JOIN DM_DonViHanhChinh d ON d.Ma_DonViHanhChinh=p.ma_don_vi_hanh_chinh
+    LEFT JOIN ocop_criteria_sets cs ON cs.id=a.criteria_set_id
     LEFT JOIN users u ON u.id=a.reviewer_id"""
 
 
@@ -181,6 +191,75 @@ def get_product(con, session, object_id):
 
 def get_application(con, session, object_id):
     return _get(con, session, object_id, APPLICATION_SELECT, "a.id", "p.ma_don_vi_hanh_chinh")
+
+
+def _criteria_set_by_id(con, session, object_id, require_active=False):
+    get_scope(con, session)
+    row = _one(con, """SELECT id,code,name,product_category,product_group,product_subgroup,
+        legal_document,version,effective_from,effective_to,max_score,active,sort_order,notes
+        FROM ocop_criteria_sets WHERE id=?""", (_number(object_id),))
+    if not row:
+        raise OcopError("Không tìm thấy bộ tiêu chí OCOP.", 404)
+    if require_active and not row["active"]:
+        raise OcopError("Bộ tiêu chí OCOP đã ngừng áp dụng.", 409)
+    return row
+
+
+def get_criteria_set(con, session, object_id):
+    return _criteria_set_by_id(con, session, object_id)
+
+
+def criteria_set_options(con, session, active_only=True):
+    get_scope(con, session)
+    sql = """SELECT id,code,name,product_category,product_group,product_subgroup,
+        legal_document,version,effective_from,max_score,active,sort_order
+        FROM ocop_criteria_sets"""
+    if active_only:
+        sql += " WHERE active=1"
+    return _all(con, sql + " ORDER BY sort_order,id")
+
+
+def list_criteria_sets(con, session, filters=None):
+    get_scope(con, session)
+    filters = filters or {}
+    where, args = ["1=1"], []
+    query = _text(filters, "q", 200)
+    if query:
+        pattern = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        where.append("(code LIKE ? ESCAPE '\\' OR name LIKE ? ESCAPE '\\' OR product_category LIKE ? ESCAPE '\\' OR product_group LIKE ? ESCAPE '\\')")
+        args.extend([pattern] * 4)
+    category = _text(filters, "category", 150)
+    if category:
+        where.append("product_category=?")
+        args.append(category)
+    rows = _all(con, """SELECT id,code,name,product_category,product_group,product_subgroup,
+        legal_document,version,effective_from,effective_to,max_score,active,sort_order,notes
+        FROM ocop_criteria_sets WHERE """ + " AND ".join(where) + " ORDER BY sort_order,id", args)
+    return {"items": rows, "total": len(rows)}
+
+
+def criteria_categories(con, session):
+    get_scope(con, session)
+    return _all(con, "SELECT DISTINCT product_category AS name FROM ocop_criteria_sets WHERE active=1 ORDER BY sort_order")
+
+
+def get_criteria_tree(con, session, object_id):
+    criteria_set = _criteria_set_by_id(con, session, object_id)
+    rows = _all(con, """SELECT id,criteria_set_id,parent_id,code,title,item_type,section_code,
+        max_score,requirement_text,sort_order,active
+        FROM ocop_criteria WHERE criteria_set_id=? AND active=1
+        ORDER BY sort_order,id""", (criteria_set["id"],))
+    options = _all(con, """SELECT o.id,o.criterion_id,o.label,o.score,o.min_star,o.is_eliminating,
+        o.evidence_hint,o.sort_order,o.active FROM ocop_criteria_options o
+        JOIN ocop_criteria c ON c.id=o.criterion_id
+        WHERE c.criteria_set_id=? AND o.active=1 ORDER BY o.criterion_id,o.sort_order,o.id""",
+        (criteria_set["id"],))
+    by_criterion = {}
+    for option in options:
+        by_criterion.setdefault(option["criterion_id"], []).append(option)
+    for row in rows:
+        row["options"] = by_criterion.get(row["id"], [])
+    return {"criteria_set": criteria_set, "criteria": rows, "option_count": len(options)}
 
 
 def _listing(con, session, filters, select, unit_column, search_columns, status_column, order_columns, extra=()):
@@ -280,10 +359,13 @@ def entity_options(con, session):
 
 def product_options(con, session):
     scope = get_scope(con, session)
-    return _all(con, """SELECT p.id,p.ten_san_pham AS name,c.TenCoSo AS entity_name
+    return _all(con, """SELECT p.id,p.ten_san_pham AS name,c.TenCoSo AS entity_name,
+        p.criteria_set_id,cs.code AS criteria_set_code,cs.name AS criteria_set_name
         FROM ocop_products p JOIN ocop_entities e ON e.ma_co_so=p.ma_co_so
         JOIN DM_CoSo c ON c.Ma_CoSo=p.ma_co_so
-        WHERE p.status='active' AND e.archived_at IS NULL"""
+        LEFT JOIN ocop_criteria_sets cs ON cs.id=p.criteria_set_id
+        WHERE p.status='active' AND e.archived_at IS NULL AND p.criteria_set_id IS NOT NULL
+          AND cs.active=1"""
         + (" AND p.ma_don_vi_hanh_chinh=?" if scope is not None else "")
         + " ORDER BY p.ten_san_pham,p.id", [scope] if scope is not None else [])
 
@@ -405,18 +487,23 @@ def _active_entity_by_code(con, session, code):
 
 def _product_values(con, session, data):
     entity = _active_entity_by_code(con, session, _text(data, "ma_co_so", 10, True))
-    return entity, _text(data, "name", 255, True), _text(data, "product_group", 100, True), _text(data, "description", 5000)
+    criteria_set = _criteria_set_by_id(con, session, _value(data, "criteria_set_id"), require_active=True)
+    name = _text(data, "name", 255, True)
+    description = _text(data, "description", 5000)
+    # product_group stays compatible with the shared master table; the exact
+    # legal sub-group is represented by criteria_set_id.
+    return entity, criteria_set, name, criteria_set["product_group"], description
 
 
 @_mutation
 def create_product(con, session, data):
-    entity, name, group, description = _product_values(con, session, data)
+    entity, criteria_set, name, group, description = _product_values(con, session, data)
     code, when = "P" + secrets.token_hex(4).upper(), _now()
     con.execute("INSERT INTO DM_SanPham(Ma_SanPham,TenSanPham,NhomSanPham,DonViTinh,TrangThai) VALUES(?,?,?,?,1)", (code, name, group, ""))
-    cursor = con.execute("""INSERT INTO ocop_products(ma_san_pham,ma_co_so,ma_don_vi_hanh_chinh,ten_san_pham,product_group,description,current_star,status,created_by,created_at,updated_at)
-        VALUES(?,?,?,?,?,?,NULL,'active',?,?,?)""", (code, entity["ma_co_so"], entity["ma_don_vi_hanh_chinh"], name, group, description, session["user_id"], when, when))
+    cursor = con.execute("""INSERT INTO ocop_products(ma_san_pham,ma_co_so,ma_don_vi_hanh_chinh,ten_san_pham,product_group,description,current_star,status,created_by,created_at,updated_at,criteria_set_id)
+        VALUES(?,?,?,?,?,?,NULL,'active',?,?,?,?)""", (code, entity["ma_co_so"], entity["ma_don_vi_hanh_chinh"], name, group, description, session["user_id"], when, when, criteria_set["id"]))
     object_id = cursor.lastrowid
-    _audit(con, session, "product", object_id, "create", {"code": code, "name": name, "group": group, "entity_id": entity["id"]}, when)
+    _audit(con, session, "product", object_id, "create", {"code": code, "name": name, "group": group, "entity_id": entity["id"], "criteria_set_id": criteria_set["id"], "criteria_set_code": criteria_set["code"]}, when)
     return get_product(con, session, object_id)
 
 
@@ -427,14 +514,19 @@ def update_product(con, session, object_id, data):
     if row["status"] != "active":
         raise OcopError("Sản phẩm đã được lưu trữ.", 409)
     _lock_check(con, product_id=row["id"])
-    entity, name, group, description = _product_values(con, session, data)
+    entity, criteria_set, name, group, description = _product_values(con, session, data)
     # Keep an existing application's jurisdiction stable even before submission.
     if entity["ma_co_so"] != row["ma_co_so"] and _one(con, "SELECT id FROM ocop_applications WHERE product_id=? LIMIT 1", (row["id"],)):
         raise OcopError("Sản phẩm đã có hồ sơ; không được thay đổi chủ thể.", 409)
     when = _now()
     con.execute("UPDATE DM_SanPham SET TenSanPham=?,NhomSanPham=? WHERE Ma_SanPham=?", (name, group, row["ma_san_pham"]))
-    con.execute("UPDATE ocop_products SET ma_co_so=?,ma_don_vi_hanh_chinh=?,ten_san_pham=?,product_group=?,description=?,updated_at=? WHERE id=? AND updated_at=?", (entity["ma_co_so"], entity["ma_don_vi_hanh_chinh"], name, group, description, when, row["id"], row["updated_at"]))
-    _audit(con, session, "product", row["id"], "edit", {"before": row, "after": {"name": name, "product_group": group, "description": description, "ma_co_so": entity["ma_co_so"]}}, when)
+    con.execute("UPDATE ocop_products SET ma_co_so=?,ma_don_vi_hanh_chinh=?,ten_san_pham=?,product_group=?,description=?,criteria_set_id=?,updated_at=? WHERE id=? AND updated_at=?", (entity["ma_co_so"], entity["ma_don_vi_hanh_chinh"], name, group, description, criteria_set["id"], when, row["id"], row["updated_at"]))
+    # Drafts that have never been submitted follow the product's current set.
+    # Returned/submitted history remains frozen to the set used on first submit.
+    con.execute("""UPDATE ocop_applications SET criteria_set_id=?,updated_at=?,revision=revision+1
+        WHERE product_id=? AND submitted_at IS NULL AND status='draft' AND criteria_set_id IS NOT ?""",
+        (criteria_set["id"], when, row["id"], criteria_set["id"]))
+    _audit(con, session, "product", row["id"], "edit", {"before": row, "after": {"name": name, "product_group": group, "description": description, "ma_co_so": entity["ma_co_so"], "criteria_set_id": criteria_set["id"], "criteria_set_code": criteria_set["code"]}}, when)
     return get_product(con, session, row["id"])
 
 
@@ -468,17 +560,20 @@ def _application_values(con, session, data, exclude_id=None):
         args.append(exclude_id)
     if _one(con, sql + " LIMIT 1", args):
         raise OcopError("Sản phẩm đã có một hồ sơ đang xử lý.", 409)
-    return product, evaluation_type, year
+    if not product.get("criteria_set_id"):
+        raise OcopError("Sản phẩm chưa được gán bộ tiêu chí OCOP. Hãy cập nhật sản phẩm trước.", 409)
+    criteria_set = _criteria_set_by_id(con, session, product["criteria_set_id"], require_active=True)
+    return product, criteria_set, evaluation_type, year
 
 
 @_mutation
 def create_application(con, session, data):
-    product, evaluation_type, year = _application_values(con, session, data)
+    product, criteria_set, evaluation_type, year = _application_values(con, session, data)
     when = _now()
-    cursor = con.execute("INSERT INTO ocop_applications(product_id,evaluation_type,year,status,created_by,created_at,updated_at,revision) VALUES(?,?,?,'draft',?,?,?,1)", (product["id"], evaluation_type, year, session["user_id"], when, when))
+    cursor = con.execute("INSERT INTO ocop_applications(product_id,evaluation_type,year,status,created_by,created_at,updated_at,revision,criteria_set_id) VALUES(?,?,?,'draft',?,?,?,1,?)", (product["id"], evaluation_type, year, session["user_id"], when, when, criteria_set["id"]))
     object_id = cursor.lastrowid
     _review(con, session, object_id, "create", "Tạo hồ sơ nháp.", when)
-    _audit(con, session, "application", object_id, "create", {"product_id": product["id"], "evaluation_type": evaluation_type, "year": year, "revision": 1}, when)
+    _audit(con, session, "application", object_id, "create", {"product_id": product["id"], "criteria_set_id": criteria_set["id"], "criteria_set_code": criteria_set["code"], "evaluation_type": evaluation_type, "year": year, "revision": 1}, when)
     return get_application(con, session, object_id)
 
 
@@ -488,15 +583,18 @@ def update_application(con, session, object_id, data):
     _version(row, data, "revision")
     if row["status"] not in ("draft", "returned"):
         raise OcopError("Chỉ sửa được hồ sơ nháp hoặc được trả lại.", 409)
-    product, evaluation_type, year = _application_values(con, session, data, row["id"])
+    product, product_criteria, evaluation_type, year = _application_values(con, session, data, row["id"])
     if product["id"] != row["product_id"] and row["submitted_at"] is not None:
         raise OcopError("Hồ sơ đã từng gửi; không được thay đổi sản phẩm.", 409)
+    criteria_set_id = row.get("criteria_set_id") if row["submitted_at"] is not None else product_criteria["id"]
+    if not criteria_set_id:
+        criteria_set_id = product_criteria["id"]
     when = _now()
-    changed = con.execute("UPDATE ocop_applications SET product_id=?,evaluation_type=?,year=?,updated_at=?,revision=revision+1 WHERE id=? AND revision=?", (product["id"], evaluation_type, year, when, row["id"], row["revision"]))
+    changed = con.execute("UPDATE ocop_applications SET product_id=?,criteria_set_id=?,evaluation_type=?,year=?,updated_at=?,revision=revision+1 WHERE id=? AND revision=?", (product["id"], criteria_set_id, evaluation_type, year, when, row["id"], row["revision"]))
     if changed.rowcount != 1:
         raise OcopError("Hồ sơ đã thay đổi. Vui lòng tải lại trang.", 409)
     _review(con, session, row["id"], "edit", "Cập nhật hồ sơ.", when)
-    _audit(con, session, "application", row["id"], "edit", {"before": {k: row[k] for k in ("product_id", "evaluation_type", "year", "revision")}, "after": {"product_id": product["id"], "evaluation_type": evaluation_type, "year": year, "revision": row["revision"] + 1}}, when)
+    _audit(con, session, "application", row["id"], "edit", {"before": {k: row[k] for k in ("product_id", "criteria_set_id", "evaluation_type", "year", "revision")}, "after": {"product_id": product["id"], "criteria_set_id": criteria_set_id, "evaluation_type": evaluation_type, "year": year, "revision": row["revision"] + 1}}, when)
     return get_application(con, session, row["id"])
 
 
@@ -523,9 +621,16 @@ def application_action(con, session, object_id, action, data):
     fields = {"status": status, "updated_at": when, "revision": row["revision"] + 1}
     detail = {"from_status": row["status"], "to_status": status, "comment": comment, "revision": fields["revision"]}
     if action == "submit":
-        product, _, _ = _application_values(con, session, row, row["id"])
+        product, product_criteria, _, _ = _application_values(con, session, row, row["id"])
         entity = get_entity(con, session, product["entity_id"])
-        snapshot = {"schema_version": 1, "submitted_at": when, "application": {k: row[k] for k in ("id", "product_id", "evaluation_type", "year")}, "product": product, "entity": entity, "revision": fields["revision"]}
+        if row.get("submitted_at") is None:
+            criteria_set = product_criteria
+            fields["criteria_set_id"] = criteria_set["id"]
+        else:
+            if not row.get("criteria_set_id"):
+                raise OcopError("Hồ sơ cũ chưa có bộ tiêu chí; cần cập nhật hồ sơ trước khi gửi lại.", 409)
+            criteria_set = _criteria_set_by_id(con, session, row["criteria_set_id"], require_active=False)
+        snapshot = {"schema_version": 2, "submitted_at": when, "application": {k: row[k] for k in ("id", "product_id", "evaluation_type", "year")}, "criteria_set": criteria_set, "product": product, "entity": entity, "revision": fields["revision"]}
         fields.update({"submitted_at": when, "reviewer_id": None, "checked_at": None, "reviewer_note": "", "submission_snapshot_json": json.dumps(snapshot, ensure_ascii=False, sort_keys=True)})
         # Each submit's complete snapshot remains in the append-only audit history.
         detail["submission_snapshot"] = snapshot

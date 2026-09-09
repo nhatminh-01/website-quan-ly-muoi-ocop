@@ -152,6 +152,7 @@ def ocop_available(con=None):
     try:
         names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         return {"ocop_entities", "ocop_products", "ocop_applications", "ocop_reviews",
+                "ocop_criteria_sets", "ocop_criteria", "ocop_criteria_options",
                 "DM_CoSo", "DM_SanPham", "PTNT_OCOP", "user_admin_units"} <= names
     finally:
         if own:
@@ -825,7 +826,8 @@ def base_page(title, body, session=None, active_path=None):
             nav_groups.append(("OCOP", [("/ocop", "dashboard", "Tổng quan OCOP"),
                                         ("/ocop/products", "table", "Sản phẩm OCOP"),
                                         ("/ocop/entities", "home", "Chủ thể OCOP"),
-                                        ("/ocop/applications", "file", "Hồ sơ đánh giá")]))
+                                        ("/ocop/applications", "file", "Hồ sơ đánh giá"),
+                                        ("/ocop/criteria", "table", "Bộ tiêu chí")]))
         nav_groups.append(("HỆ THỐNG", system_items))
         nav = []
         for group, items in nav_groups:
@@ -861,7 +863,7 @@ def base_page(title, body, session=None, active_path=None):
         <button type="button" id="sidebar-backdrop" class="sidebar-backdrop" aria-label="Đóng menu" tabindex="-1"></button>
         """
         body = f'<main class="app-main" id="main-content">{body}</main>'
-    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260908-ocop1"><script src="/assets/app.js?v=20260908-red" defer></script></head><body>{top}{body}</body></html>"""
+    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260909-ocop2"><script src="/assets/app.js?v=20260908-red" defer></script></head><body>{top}{body}</body></html>"""
 
 
 def login_page(message=""):
