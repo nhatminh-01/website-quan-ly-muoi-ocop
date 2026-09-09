@@ -1,9 +1,11 @@
 # Website nội bộ quản lý số liệu sản xuất muối
 
+Lịch sử thay đổi hệ thống: [CHANGELOG.md](CHANGELOG.md).
+
 ## OCOP giai đoạn 1 — bản kiểm thử
 
 Đã bổ sung quản lý chủ thể, sản phẩm, hồ sơ OCOP và phân quyền theo mã xã/phường,
-trên nền Python HTTP Server + SQLite hiện có. Chi tiết thay đổi, migration, kiểm thử
+trên nền Python HTTP Server + PostgreSQL. Chi tiết thay đổi, migration, kiểm thử
 và giới hạn: [OCOP1_REPORT.md](OCOP1_REPORT.md).
 
 **Mở `START_OCOP_TEST_WINDOWS.bat`**, sau đó truy cập **http://127.0.0.1:8081/ocop**.
@@ -14,8 +16,8 @@ Nếu máy chưa có Python trên PATH, tệp chạy sẽ thử Python có sẵn
 Nếu chưa có database test, tạo bản sao một lần bằng `python prepare_ocop_test.py`.
 Lệnh này chỉ đọc database chính, không ghi đè database test đã tồn tại.
 
-`START_WINDOWS.bat` và `python server.py` vẫn là cách chạy hệ thống Diêm nghiệp
-với database mặc định như trước. Chưa chạy migration OCOP trên database chính.
+`START_WINDOWS.bat` chạy hệ thống Diêm nghiệp với PostgreSQL mặc định. Cấu hình mẫu,
+DDL, migration, ETL và validation nằm trong thư mục `database` của repository.
 
 OCOP 1 chưa có chấm điểm, chứng nhận, đồng bộ kết quả chính thức hoặc upload minh chứng.
 Hồ sơ hợp lệ chỉ có nghĩa hoàn thành bước kiểm tra hồ sơ, chưa được công nhận hạng sao.
@@ -53,27 +55,21 @@ Các cột **Cộng** và **Năng suất bình quân** được tính tự độ
 
 ## Chạy trên Windows
 
-1. Cài Python 3.11+.
-2. Mở Command Prompt tại thư mục này.
-3. Cài thư viện xuất Excel:
+1. Cài PostgreSQL và chuẩn bị môi trường theo `database\README.md`.
+2. Sao chép `database\config\.env.example` thành `database\.env`, rồi điền thông tin kết nối.
+3. Chạy website:
 
 ```bat
-pip install openpyxl
+START_WINDOWS.bat
 ```
 
-4. Chạy website:
-
-```bat
-python server.py
-```
-
-5. Trên máy chủ mở:
+4. Trên máy chủ mở:
 
 ```text
 http://127.0.0.1:8080
 ```
 
-6. Các máy cùng mạng LAN mở:
+5. Các máy cùng mạng LAN mở:
 
 ```text
 http://IP-MAY-CHU:8080
@@ -99,9 +95,12 @@ Ví dụ máy chủ có IP `192.168.1.20` thì các xã/phường truy cập `ht
 
 ## Dữ liệu lưu ở đâu?
 
-Dữ liệu được lưu tập trung trong file SQLite `salt_management.db` nằm cùng thư mục với `server.py`.
+Dữ liệu vận hành nằm trong PostgreSQL database `ptnt_qd5277_dev`: schema `app`
+cho nghiệp vụ website, `qd5277` cho dữ liệu chuẩn và `staging` cho dữ liệu nhập thô.
+File `salt_management.db` chỉ còn là nguồn lịch sử/rollback; không phải database mặc định.
 
-Nên sao lưu file này định kỳ. Khi triển khai chính thức, nên đặt trên máy chủ của đơn vị và thiết lập cơ chế sao lưu tự động.
+Mật khẩu PostgreSQL chỉ lưu trong `database\.env`, không ghi cứng hoặc commit vào source.
+Nên sao lưu PostgreSQL định kỳ trước khi đưa vào vận hành chính thức.
 
 ## Lưu ý trước khi đưa vào vận hành thật
 

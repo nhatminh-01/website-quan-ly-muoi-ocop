@@ -5,12 +5,18 @@ The caller owns the connection. No server globals or database paths are used.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 import json
 import re
 import secrets
 import sqlite3
+
+try:
+    import psycopg
+except ImportError:  # Legacy SQLite-only test/runtime.
+    psycopg = None
 
 
 class OcopError(Exception):
@@ -59,13 +65,18 @@ def _number(value, minimum=1, maximum=2147483647):
 def _one(con, sql, args=()):
     cursor = con.execute(sql, args)
     row = cursor.fetchone()
-    return dict(zip((col[0] for col in cursor.description), row)) if row is not None else None
+    if row is None:
+        return None
+    if isinstance(row, Mapping):
+        return dict(row)
+    return dict(zip((col[0] for col in cursor.description), row))
 
 
 def _all(con, sql, args=()):
     cursor = con.execute(sql, args)
     names = [col[0] for col in cursor.description]
-    return [dict(zip(names, row)) for row in cursor.fetchall()]
+    return [dict(row) if isinstance(row, Mapping) else dict(zip(names, row))
+            for row in cursor.fetchall()]
 
 
 @contextmanager
@@ -92,9 +103,11 @@ def _mutation(fn):
             with _transaction(con):
                 get_scope(con, session)
                 return fn(con, session, *args, **kwargs)
-        except sqlite3.IntegrityError:
+        except tuple(error for error in (sqlite3.IntegrityError,
+                                         getattr(psycopg, "IntegrityError", None)) if error):
             raise OcopError("Dữ liệu bị trùng hoặc không còn phù hợp. Vui lòng tải lại và kiểm tra.", 409) from None
-        except sqlite3.Error:
+        except tuple(error for error in (sqlite3.Error,
+                                         getattr(psycopg, "Error", None)) if error):
             raise OcopError("Không thể lưu dữ liệu lúc này. Vui lòng thử lại.", 503) from None
     return execute
 

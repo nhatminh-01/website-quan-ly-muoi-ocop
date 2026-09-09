@@ -1,0 +1,12 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+
+database/.env
+database/.venv/
+database/data/
+database/backups/
+database/test-temp*/
+database/validation/validation_issues.csv
+database/validation/validation_report.md

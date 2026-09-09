@@ -24,6 +24,9 @@ import sys
 import threading
 import time
 import logging
+import psycopg
+from backend_db import compat_connect, load_settings
+import repositories
 from datetime import datetime, date
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -32,7 +35,8 @@ from email.parser import BytesParser
 from email.policy import default
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_PATH = os.path.abspath(os.environ.get("SALT_WEB_DB", os.path.join(BASE_DIR, "salt_management.db")))
+DEFAULT_SQLITE_PATH = os.path.abspath(os.path.join(BASE_DIR, "salt_management.db"))
+DB_PATH = os.path.abspath(os.environ.get("SALT_WEB_DB", DEFAULT_SQLITE_PATH))
 ASSET_FILES = {
     "/assets/quoc-huy.png": ("quoc-huy.png", "image/png"),
     "/assets/app.css": ("app.css", "text/css; charset=utf-8"),
@@ -83,6 +87,8 @@ OFFICIAL_ADMIN_UNITS = {
     "Phường Bà Rịa": ("26560", "phuong"),
 }
 OFFICIAL_ADMIN_LOOKUP = {name.casefold(): value for name, value in OFFICIAL_ADMIN_UNITS.items()}
+OFFICIAL_ADMIN_LOOKUP["xã an thời đông".casefold()] = OFFICIAL_ADMIN_UNITS["Xã An Thới Đông"]
+OFFICIAL_ADMIN_NAMES_BY_CODE = {code: name for name, (code, _level) in OFFICIAL_ADMIN_UNITS.items()}
 
 NUMERIC_FIELDS = [
     "area_land", "area_tarp",
@@ -138,10 +144,68 @@ def verify_password(password: str, stored: str) -> bool:
 
 
 def db_conn():
+    if using_postgres():
+        return compat_connect()
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA foreign_keys = ON")
     return con
+
+
+def using_postgres():
+    return DB_PATH == DEFAULT_SQLITE_PATH and os.environ.get("SALT_WEB_BACKEND", "postgres").lower() != "sqlite"
+
+
+def get_user(con, user_id):
+    if using_postgres():
+        return repositories.get_user(con, user_id)
+    return con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+
+
+def find_active_user(con, username):
+    if using_postgres():
+        return repositories.find_active_user(con, username)
+    return con.execute("SELECT * FROM users WHERE username=? AND active=1", (username,)).fetchone()
+
+
+def create_user(con, username, password_hash, role, unit_name, created_at):
+    if using_postgres():
+        return repositories.create_user(con, username, password_hash, role, unit_name, created_at)
+    cursor = con.execute(
+        "INSERT INTO users(username,password_hash,role,unit_name,active,created_at) VALUES(?,?,?,?,1,?)",
+        (username, password_hash, role, unit_name, created_at),
+    )
+    return cursor.lastrowid
+
+
+def set_user_password(con, user_id, password_hash):
+    if using_postgres():
+        repositories.set_local_password(con, user_id, password_hash)
+    else:
+        con.execute("UPDATE users SET password_hash=? WHERE id=?", (password_hash, user_id))
+
+
+def update_user_account(con, user_id, username, role, unit_name, active, password_hash=None):
+    if using_postgres():
+        repositories.update_user(con, user_id, username, role, unit_name, active, password_hash)
+        return
+    if password_hash is not None:
+        con.execute(
+            "UPDATE users SET username=?,password_hash=?,role=?,unit_name=?,active=? WHERE id=?",
+            (username, password_hash, role, unit_name, active, user_id),
+        )
+    else:
+        con.execute(
+            "UPDATE users SET username=?,role=?,unit_name=?,active=? WHERE id=?",
+            (username, role, unit_name, active, user_id),
+        )
+
+
+def delete_user_account(con, user_id):
+    if using_postgres():
+        repositories.delete_user(con, user_id)
+    else:
+        con.execute("DELETE FROM users WHERE id=?", (user_id,))
 
 
 def ocop_available(con=None):
@@ -150,6 +214,8 @@ def ocop_available(con=None):
     if own:
         con = db_conn()
     try:
+        if using_postgres():
+            return repositories.postgres_application_ready(con)
         names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         return {"ocop_entities", "ocop_products", "ocop_applications", "ocop_reviews",
                 "DM_CoSo", "DM_SanPham", "PTNT_OCOP", "user_admin_units"} <= names
@@ -178,6 +244,14 @@ def ocop_user_links(con, user_id):
 
 def init_db():
     con = db_conn()
+    if using_postgres():
+        if not repositories.postgres_application_ready(con):
+            con.close()
+            raise RuntimeError("PostgreSQL chưa có schema app. Chạy DB/sql/004_app_schema.sql trước.")
+        seed_official_admin_units(con)
+        con.commit()
+        con.close()
+        return
     con.executescript(
         """
         CREATE TABLE IF NOT EXISTS users(
@@ -393,17 +467,26 @@ def _temporary_unit_code(unit_name):
     return "TMP" + digest
 
 
+def canonical_admin_unit(unit_name):
+    """Return the configured official name/code, including known source aliases."""
+    official = OFFICIAL_ADMIN_LOOKUP.get(str(unit_name).strip().casefold())
+    if not official:
+        return None
+    code, _level = official
+    return OFFICIAL_ADMIN_NAMES_BY_CODE[code], code
+
+
 def seed_official_admin_units(con):
     """Tạo/cập nhật danh mục đơn vị hành chính chính thức của hệ thống."""
     con.execute(
         """
         INSERT INTO DM_DonViHanhChinh
         (Ma_DonViHanhChinh, Ma_DonViCapTren, TenDonVi, CapHanhChinh, TinhTrang)
-        VALUES(?, NULL, ?, 'tinh', 1)
+        VALUES(?, NULL, ?, 'tinh', TRUE)
         ON CONFLICT(Ma_DonViHanhChinh) DO UPDATE SET
             TenDonVi=excluded.TenDonVi,
             CapHanhChinh=excluded.CapHanhChinh,
-            TinhTrang=1
+            TinhTrang=TRUE
         """,
         (HCMC_ADMIN_CODE, HCMC_ADMIN_NAME),
     )
@@ -413,12 +496,12 @@ def seed_official_admin_units(con):
             """
             INSERT INTO DM_DonViHanhChinh
             (Ma_DonViHanhChinh, Ma_DonViCapTren, TenDonVi, CapHanhChinh, TinhTrang)
-            VALUES(?, ?, ?, ?, 1)
+            VALUES(?, ?, ?, ?, TRUE)
             ON CONFLICT(Ma_DonViHanhChinh) DO UPDATE SET
                 Ma_DonViCapTren=excluded.Ma_DonViCapTren,
                 TenDonVi=excluded.TenDonVi,
                 CapHanhChinh=excluded.CapHanhChinh,
-                TinhTrang=1
+                TinhTrang=TRUE
             """,
             (code, HCMC_ADMIN_CODE, unit_name, level),
         )
@@ -500,22 +583,24 @@ def ensure_standard_unit(con, unit_name):
 
     con.execute(
         """
-        INSERT OR IGNORE INTO DM_DonViHanhChinh
+        INSERT INTO DM_DonViHanhChinh
         (Ma_DonViHanhChinh, Ma_DonViCapTren, TenDonVi, CapHanhChinh, TinhTrang)
-        VALUES(?, NULL, ?, ?, 1)
+        VALUES(?, NULL, ?, ?, TRUE)
+        ON CONFLICT(Ma_DonViHanhChinh) DO NOTHING
         """,
         (code, unit_name, level),
     )
     return code
 
 def ensure_standard_time(con, report_date):
-    """Tạo mã thời gian theo ngày YYYYMMDD để không làm mất các kỳ báo cáo tuần trong cùng tháng."""
+    """Tạo mã kỳ tháng YYYY-MM cho dữ liệu tổng hợp chuẩn."""
     d = date.fromisoformat(str(report_date))
-    code = d.strftime("%Y%m%d")
+    code = d.strftime("%Y-%m")
     con.execute(
         """
-        INSERT OR IGNORE INTO DM_KhoangThoiGian(Ma_ThoiGian, Nam, Thang, VuMua)
+        INSERT INTO DM_KhoangThoiGian(Ma_ThoiGian, Nam, Thang, VuMua)
         VALUES(?, ?, ?, NULL)
+        ON CONFLICT(Ma_ThoiGian) DO NOTHING
         """,
         (code, d.year, d.month),
     )
@@ -523,34 +608,23 @@ def ensure_standard_time(con, report_date):
 
 
 def sync_standard_salt_record(con, record):
-    """Chuẩn hóa một báo cáo đã duyệt sang DN_SanLuongMuoi.
-
-    Quy ước nghiệp vụ đã được xác nhận:
-    - Muối đất  -> Truyền thống
-    - Muối trải bạt -> Trải bạt
-    """
+    """Đồng bộ record lũy tiến mới nhất của tháng sang một dòng Truyền thống."""
     if not record:
         return
 
     unit_code = ensure_standard_unit(con, record["unit_name"])
     time_code = ensure_standard_time(con, record["report_date"])
+    month_start = date.fromisoformat(str(record["report_date"])).replace(day=1)
+    next_month = date(month_start.year + (month_start.month == 12), (month_start.month % 12) + 1, 1)
+    mode_filter = " AND reporting_mode='cumulative'" if using_postgres() else ""
+    latest = con.execute(
+        """SELECT * FROM records
+           WHERE unit_name=? AND status='approved'
+             AND report_date>=? AND report_date<?""" + mode_filter +
+        " ORDER BY report_date DESC, id DESC LIMIT 1",
+        (record["unit_name"], month_start.isoformat(), next_month.isoformat()),
+    ).fetchone()
 
-    methods = [
-        (
-            "Truyền thống",
-            float(record["area_land"] or 0),
-            float(record["harvest_land"] or 0),
-            price_average(record["price_land"]),
-        ),
-        (
-            "Trải bạt",
-            float(record["area_tarp"] or 0),
-            float(record["harvest_tarp"] or 0),
-            price_average(record["price_tarp"]),
-        ),
-    ]
-
-    # Xóa dữ liệu chuẩn cũ của đúng báo cáo/phương pháp để đồng bộ lại an toàn, không tạo trùng.
     con.execute(
         """
         DELETE FROM DN_SanLuongMuoi
@@ -560,19 +634,24 @@ def sync_standard_salt_record(con, record):
         """,
         (unit_code, time_code),
     )
+    if not latest:
+        return
 
-    for method, area, production, avg_price in methods:
-        # Nếu hoàn toàn không có dữ liệu cho phương pháp này thì không tạo bản ghi rỗng.
-        if area == 0 and production == 0 and avg_price == 0:
-            continue
-        con.execute(
-            """
-            INSERT INTO DN_SanLuongMuoi
-            (Ma_DonViHanhChinh, Ma_ThoiGian, PhuongPhapSX, DienTich, SanLuong, GiaBanBinhQuan)
-            VALUES(?,?,?,?,?,?)
-            """,
-            (unit_code, time_code, method, round(area, 2), round(production, 2), round(avg_price, 2)),
-        )
+    area = float(latest["area_land"] or 0) + float(latest["area_tarp"] or 0)
+    production = float(latest["harvest_land"] or 0) + float(latest["harvest_tarp"] or 0)
+    standard_price = None if using_postgres() else 0
+    con.execute(
+        """
+        INSERT INTO DN_SanLuongMuoi
+        (Ma_DonViHanhChinh, Ma_ThoiGian, PhuongPhapSX, DienTich, SanLuong, GiaBanBinhQuan)
+        VALUES(?, ?, 'Truyền thống', ?, ?, ?)
+        ON CONFLICT(Ma_DonViHanhChinh, Ma_ThoiGian, PhuongPhapSX) DO UPDATE SET
+            DienTich=excluded.DienTich,
+            SanLuong=excluded.SanLuong,
+            GiaBanBinhQuan=excluded.GiaBanBinhQuan
+        """,
+        (unit_code, time_code, round(area, 2), round(production, 2), standard_price),
+    )
 
 
 def sync_all_approved_records():
@@ -721,7 +800,7 @@ def get_session(handler):
     if s:
         con = db_conn()
         try:
-            current = con.execute("SELECT * FROM users WHERE id=?", (s["user_id"],)).fetchone()
+            current = get_user(con, s["user_id"])
         finally:
             con.close()
         if (not current or not current["active"] or current["role"] not in (ROLE_ADMIN, ROLE_UNIT)
@@ -969,7 +1048,7 @@ def dashboard_page(session):
     }
 
     def metric_panel(label, total_key, land_key, tarp_key, unit, symbol, amber=False):
-        total = totals[total_key]
+        total = float(totals[total_key] or 0)
         land, tarp = breakdowns[land_key], breakdowns[tarp_key]
         tone = ' amber' if amber else ''
         if amber:
@@ -1336,7 +1415,7 @@ def users_page(session):
         return None
 
     con = db_conn()
-    users = con.execute(
+    users = repositories.list_users(con) if using_postgres() else con.execute(
         "SELECT * FROM users ORDER BY role, unit_name, username"
     ).fetchall()
     con.close()
@@ -1746,6 +1825,11 @@ def import_excel_data(
             ):
                 continue
 
+            official_unit = canonical_admin_unit(unit_name)
+            if not official_unit:
+                raise ValueError(f"Đơn vị chưa có trong danh mục chính thức: {unit_name}")
+            unit_name, unit_code = official_unit
+
 
             record = {
 
@@ -1909,6 +1993,11 @@ def import_excel_data(
                     """,
                     record
                 )
+                if using_postgres():
+                    con.execute(
+                        "UPDATE records SET reporting_mode='cumulative',ma_don_vi_hanh_chinh=? WHERE id=?",
+                        (unit_code, existing["id"]),
+                    )
 
 
                 add_audit(
@@ -2017,6 +2106,11 @@ def import_excel_data(
                     """,
                     record
                 )
+                if using_postgres():
+                    con.execute(
+                        "UPDATE records SET reporting_mode='cumulative',ma_don_vi_hanh_chinh=? WHERE id=?",
+                        (unit_code, cur.lastrowid),
+                    )
 
 
                 add_audit(
@@ -2068,6 +2162,11 @@ def save_record(session, data, rid=None):
     report_date = data.get("report_date", "").strip()
     if not unit_name or not report_date:
         return False, "Vui lòng chọn đơn vị và ngày/kỳ chốt số liệu."
+    official_unit = canonical_admin_unit(unit_name)
+    if using_postgres() and not official_unit:
+        return False, f"Đơn vị {unit_name} chưa có trong danh mục hành chính chính thức."
+    unit_code = official_unit[1] if official_unit else None
+    unit_name = official_unit[0] if official_unit else unit_name
     try:
         date.fromisoformat(report_date)
     except ValueError:
@@ -2087,6 +2186,11 @@ def save_record(session, data, rid=None):
                 (report_date, unit_name, session["user_id"], values["area_land"], values["area_tarp"], values["harvest_land"], values["harvest_tarp"], values["sold_land"], values["sold_tarp"], values["remaining_land"], values["remaining_tarp"], values["processed_fine"], values["processed_iodized"], values["households"], values["workers"], price_land, price_tarp, values["damage_land"], values["damage_tarp"], note, now_text(), now_text())
             )
             rid = cur.lastrowid
+            if using_postgres():
+                con.execute(
+                    "UPDATE records SET reporting_mode='cumulative',ma_don_vi_hanh_chinh=? WHERE id=?",
+                    (unit_code, rid),
+                )
             add_audit(con, rid, session["user_id"], "Tạo báo cáo", "Lưu bản nháp")
         else:
             r = con.execute("SELECT * FROM records WHERE id=?", (rid,)).fetchone()
@@ -2098,10 +2202,15 @@ def save_record(session, data, rid=None):
                 """UPDATE records SET report_date=?,unit_name=?,area_land=?,area_tarp=?,harvest_land=?,harvest_tarp=?,sold_land=?,sold_tarp=?,remaining_land=?,remaining_tarp=?,processed_fine=?,processed_iodized=?,households=?,workers=?,price_land=?,price_tarp=?,damage_land=?,damage_tarp=?,note=?,updated_at=? WHERE id=?""",
                 (report_date, unit_name, values["area_land"], values["area_tarp"], values["harvest_land"], values["harvest_tarp"], values["sold_land"], values["sold_tarp"], values["remaining_land"], values["remaining_tarp"], values["processed_fine"], values["processed_iodized"], values["households"], values["workers"], price_land, price_tarp, values["damage_land"], values["damage_tarp"], note, now_text(), rid)
             )
+            if using_postgres():
+                con.execute(
+                    "UPDATE records SET reporting_mode='cumulative',ma_don_vi_hanh_chinh=? WHERE id=?",
+                    (unit_code, rid),
+                )
             add_audit(con, rid, session["user_id"], "Cập nhật báo cáo", "Chỉnh sửa số liệu")
         con.commit()
         return True, rid
-    except sqlite3.IntegrityError:
+    except (sqlite3.IntegrityError, psycopg.IntegrityError):
         con.rollback()
         return False, f"Đơn vị {unit_name} đã có báo cáo ngày {report_date}. Hãy mở báo cáo đó để cập nhật."
     finally:
@@ -2610,10 +2719,7 @@ class Handler(BaseHTTPRequestHandler):
 
             con = db_conn()
 
-            user = con.execute(
-                "SELECT * FROM users WHERE id=?",
-                (uid,)
-            ).fetchone()
+            user = get_user(con, uid)
 
             con.close()
 
@@ -2843,7 +2949,7 @@ class Handler(BaseHTTPRequestHandler):
             data = parse_body(self)
         if path=="/login":
             username=data.get("username","").strip(); password=data.get("password","")
-            con=db_conn(); u=con.execute("SELECT * FROM users WHERE username=? AND active=1",(username,)).fetchone(); con.close()
+            con=db_conn(); u=find_active_user(con, username); con.close()
             if not u or not verify_password(password,u["password_hash"]): self.send_html(login_page("Tên đăng nhập hoặc mật khẩu không đúng."),401); return
             sid=new_session(u); self.redirect("/dashboard",[("Set-Cookie",f"salt_session={sid}; Path=/; HttpOnly; SameSite=Lax")]); return
         sid,session=self.require_session()
@@ -2966,16 +3072,16 @@ class Handler(BaseHTTPRequestHandler):
             if role not in (ROLE_ADMIN,ROLE_UNIT) or len(password)<6 or not username or not unit_name: set_flash(session,"err","Thông tin tài khoản chưa hợp lệ."); self.redirect("/users"); return
             con=db_conn()
             try:
-                con.execute("INSERT INTO users(username,password_hash,role,unit_name,active,created_at) VALUES(?,?,?,?,1,?)",(username,hash_password(password),role,unit_name,now_text())); con.commit(); set_flash(session,"ok","Đã tạo tài khoản.")
-            except sqlite3.IntegrityError: set_flash(session,"err","Tên đăng nhập đã tồn tại.")
+                create_user(con, username, hash_password(password), role, unit_name, now_text()); con.commit(); set_flash(session,"ok","Đã tạo tài khoản.")
+            except (sqlite3.IntegrityError, psycopg.IntegrityError): set_flash(session,"err","Tên đăng nhập đã tồn tại.")
             finally: con.close()
             self.redirect("/users"); return
         if path=="/change-password":
             old=data.get("old",""); new=data.get("new",""); new2=data.get("new2","")
-            con=db_conn(); u=con.execute("SELECT * FROM users WHERE id=?",(session["user_id"],)).fetchone()
+            con=db_conn(); u=get_user(con, session["user_id"])
             if not verify_password(old,u["password_hash"]): con.close(); self.send_html(change_password_page(session,"Mật khẩu hiện tại không đúng."),400); return
             if new!=new2 or len(new)<8: con.close(); self.send_html(change_password_page(session,"Mật khẩu mới phải trùng nhau và có ít nhất 8 ký tự."),400); return
-            con.execute("UPDATE users SET password_hash=? WHERE id=?",(hash_password(new),session["user_id"])); con.commit(); con.close(); set_flash(session,"ok","Đã đổi mật khẩu."); self.redirect("/dashboard"); return
+            set_user_password(con, session["user_id"], hash_password(new)); con.commit(); con.close(); set_flash(session,"ok","Đã đổi mật khẩu."); self.redirect("/dashboard"); return
         parts=[p for p in path.split('/') if p]
         if (
             len(parts) == 3
@@ -3003,10 +3109,7 @@ class Handler(BaseHTTPRequestHandler):
 
                 con = db_conn()
 
-                user = con.execute(
-                    "SELECT * FROM users WHERE id=?",
-                    (uid,)
-                ).fetchone()
+                user = get_user(con, uid)
 
                 if not user:
                     con.close()
@@ -3041,6 +3144,7 @@ class Handler(BaseHTTPRequestHandler):
 
                 try:
 
+                    new_password_hash = None
                     if password:
                         if len(password) < 6:
                             con.close()
@@ -3054,44 +3158,11 @@ class Handler(BaseHTTPRequestHandler):
                             )
                             return
 
-                        con.execute(
-                            """
-                            UPDATE users
-                            SET username=?,
-                                password_hash=?,
-                                role=?,
-                                unit_name=?,
-                                active=?
-                            WHERE id=?
-                            """,
-                            (
-                                username,
-                                hash_password(password),
-                                role,
-                                unit_name,
-                                active,
-                                uid
-                            )
-                        )
+                        new_password_hash = hash_password(password)
 
-                    else:
-                        con.execute(
-                            """
-                            UPDATE users
-                            SET username=?,
-                                role=?,
-                                unit_name=?,
-                                active=?
-                            WHERE id=?
-                            """,
-                            (
-                                username,
-                                role,
-                                unit_name,
-                                active,
-                                uid
-                            )
-                        )
+                    update_user_account(
+                        con, uid, username, role, unit_name, active, new_password_hash
+                    )
 
                     con.commit()
 
@@ -3101,7 +3172,7 @@ class Handler(BaseHTTPRequestHandler):
                         "Đã cập nhật tài khoản."
                     )
 
-                except sqlite3.IntegrityError:
+                except (sqlite3.IntegrityError, psycopg.IntegrityError):
                     con.rollback()
 
                     set_flash(
@@ -3132,10 +3203,7 @@ class Handler(BaseHTTPRequestHandler):
 
                 con = db_conn()
 
-                user = con.execute(
-                    "SELECT * FROM users WHERE id=?",
-                    (uid,)
-                ).fetchone()
+                user = get_user(con, uid)
 
                 if not user:
                     con.close()
@@ -3171,10 +3239,7 @@ class Handler(BaseHTTPRequestHandler):
 
                 else:
 
-                    con.execute(
-                        "DELETE FROM users WHERE id=?",
-                        (uid,)
-                    )
+                    delete_user_account(con, uid)
 
                     con.commit()
                     con.close()
@@ -3292,7 +3357,11 @@ def main():
     server=ThreadingHTTPServer((args.host,args.port),Handler)
     print("="*72)
     print("HỆ THỐNG QUẢN LÝ NGHIỆP VỤ CHI CỤC PHÁT TRIỂN NÔNG THÔN")
-    print(f"Database: {DB_PATH}")
+    if using_postgres():
+        settings = load_settings()
+        print(f"Database PostgreSQL: {settings.dbname} @ {settings.host}:{settings.port}")
+    else:
+        print(f"Database SQLite TEST: {DB_PATH}")
     print(f"Đang chạy tại: http://127.0.0.1:{args.port}")
     print(f"Trong mạng LAN: http://<IP-máy-chủ>:{args.port}")
     print("Tài khoản demo Chi cục: chicuc / 123456")
