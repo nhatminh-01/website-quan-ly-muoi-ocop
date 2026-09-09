@@ -15,7 +15,7 @@ Tài liệu này ghi lại các thay đổi đáng chú ý của hệ thống Qu
 
 - Giữ schema `qd5277` gồm 19 bảng dữ liệu chuẩn theo cấu trúc đã thống nhất.
 - Giữ schema `staging` để lưu dữ liệu thô và giá trị nguồn từ Excel.
-- Thêm schema `app` gồm 11 bảng phục vụ tài khoản, báo cáo, audit và workflow OCOP.
+- Thêm schema `app` gồm 14 bảng phục vụ tài khoản, báo cáo, audit và workflow OCOP.
 - Thêm bảng `app.schema_migrations` để theo dõi các migration đã áp dụng.
 - Thêm sequence kỹ thuật cho khóa chính `DN_SanLuongMuoi.Ma_SanLuongMuoi`.
 - Thêm unique index theo đơn vị, tháng và phương pháp sản xuất để UPSERT không tạo dòng trùng.
@@ -58,8 +58,9 @@ Tài liệu này ghi lại các thay đổi đáng chú ý của hệ thống Qu
 ### OCOP
 
 - Khởi tạo bảng chủ thể, sản phẩm, hồ sơ và lịch sử đánh giá OCOP trong schema `app`.
-- Không seed, migrate hoặc chuẩn hóa dữ liệu nghiệp vụ OCOP vì nguồn hiện chưa có dữ liệu.
-- Cấu trúc đã sẵn sàng để phát triển tiếp nhưng chưa bổ sung tính năng VNeID, chấm điểm hoặc chứng nhận.
+- Tích hợp OCOP phase 2 từ `origin/main`: thêm danh mục bộ tiêu chí, cây tiêu chí và lựa chọn điểm động.
+- Nạp 26 bộ tiêu chí tham chiếu cùng ba mục A/B/C; không seed sản phẩm, chủ thể, hồ sơ hoặc kết quả OCOP.
+- Chưa bổ sung tính năng VNeID, chấm điểm chi tiết hoặc chứng nhận.
 
 ### Mã nguồn backend
 
@@ -76,11 +77,12 @@ Tài liệu này ghi lại các thay đổi đáng chú ý của hệ thống Qu
 2. `005_monthly_salt_sync.sql` — bổ sung sequence và cơ chế khóa dòng chuẩn theo tháng.
 3. `006_official_admin_units.sql` — nạp mã hành chính chính thức và loại bỏ mã tạm.
 4. `007_ocop_init_only.sql` — xác nhận cấu trúc OCOP ở trạng thái init-only.
-5. `migrate_sqlite_to_postgres.py` — chuyển dữ liệu nghiệp vụ SQLite cũ.
+5. `008_ocop_dynamic_criteria.sql` — đồng bộ cấu trúc và danh mục tiêu chí động của OCOP phase 2.
+6. `migrate_sqlite_to_postgres.py` — chuyển dữ liệu nghiệp vụ SQLite cũ.
 
 ### Kiểm thử và xác nhận
 
-- 25/25 automated tests đạt, gồm regression test cũ và integration test PostgreSQL.
+- 31/31 automated tests đạt sau khi tích hợp OCOP phase 2 từ nhánh chính.
 - Smoke test đăng nhập và truy cập `dashboard`, báo cáo, dữ liệu chuẩn, tài khoản, OCOP đều trả HTTP 200.
 - Database sau migration: 10 users, 10 credentials, 24 báo cáo và 25 audit log.
 - `DN_SanLuongMuoi` có 24 dòng cho ba tháng; không có khóa tháng bị trùng và không còn mã `TMP`.

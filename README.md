@@ -2,11 +2,12 @@
 
 Lịch sử thay đổi hệ thống: [CHANGELOG.md](CHANGELOG.md).
 
-## OCOP giai đoạn 1 — bản kiểm thử
+## OCOP giai đoạn 2 — bản kiểm thử
 
-Đã bổ sung quản lý chủ thể, sản phẩm, hồ sơ OCOP và phân quyền theo mã xã/phường,
-trên nền Python HTTP Server + PostgreSQL. Chi tiết thay đổi, migration, kiểm thử
-và giới hạn: [OCOP1_REPORT.md](OCOP1_REPORT.md).
+Đã bổ sung nền tảng giai đoạn 1 (chủ thể, sản phẩm, hồ sơ, phân quyền) và giai đoạn 2:
+**26 bộ tiêu chí OCOP dạng dữ liệu động** theo Quyết định 26/2026/QĐ-TTg, liên kết bộ tiêu chí
+với sản phẩm/hồ sơ và giao diện tra cứu `/ocop/criteria`. Chi tiết: [OCOP2_REPORT.md](OCOP2_REPORT.md).
+Báo cáo giai đoạn trước vẫn lưu tại [OCOP1_REPORT.md](OCOP1_REPORT.md).
 
 **Mở `START_OCOP_TEST_WINDOWS.bat`**, sau đó truy cập **http://127.0.0.1:8081/ocop**.
 Tệp chạy này dùng riêng `salt_management_TEST.db`, tự kiểm tra migration đã chạy
@@ -19,7 +20,8 @@ Lệnh này chỉ đọc database chính, không ghi đè database test đã t�
 `START_WINDOWS.bat` chạy hệ thống Diêm nghiệp với PostgreSQL mặc định. Cấu hình mẫu,
 DDL, migration, ETL và validation nằm trong thư mục `database` của repository.
 
-OCOP 1 chưa có chấm điểm, chứng nhận, đồng bộ kết quả chính thức hoặc upload minh chứng.
+OCOP giai đoạn 2 chưa có chấm điểm Hội đồng, chứng nhận, đồng bộ kết quả chính thức hoặc upload minh chứng.
+Giai đoạn 2 mới nạp 26 bộ sản phẩm và khung A/B/C (40/25/35); tiêu chí con và lựa chọn điểm sẽ được nạp ở giai đoạn chấm điểm.
 Hồ sơ hợp lệ chỉ có nghĩa hoàn thành bước kiểm tra hồ sơ, chưa được công nhận hạng sao.
 
 Chạy kiểm thử tự động bằng `python -B -m unittest discover -s tests -v`.

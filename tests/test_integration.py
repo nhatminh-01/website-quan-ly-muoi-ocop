@@ -121,8 +121,9 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(status,303,body.decode())
         entity_id = int(headers["Location"].rsplit("/",1)[1])
         entity = self.row("SELECT * FROM ocop_entities WHERE id=?",(entity_id,))
+        criteria_id = self.row("SELECT id FROM ocop_criteria_sets WHERE code='QD26-10'")["id"]
         status, headers, body = client.request("POST","/ocop/products/new",{
-            "name":name,"ma_co_so":entity["ma_co_so"],"product_group":"Gia vị khác", "description":"Sản phẩm thử"})
+            "name":name,"ma_co_so":entity["ma_co_so"],"criteria_set_id":criteria_id, "description":"Sản phẩm thử"})
         self.assertEqual(status,303,body.decode())
         pid = int(headers["Location"].rsplit("/",1)[1])
         status, headers, body = client.request("POST","/ocop/applications/new",{
@@ -138,11 +139,18 @@ class IntegrationTests(unittest.TestCase):
     def test_ocop_workflow_scope_snapshot_and_audit(self):
         eid,pid,aid=self.create_ocop()
         for route in ("/ocop", "/ocop/entities", "/ocop/products", "/ocop/applications",
+                "/ocop/criteria", "/ocop/criteria/10",
                 f"/ocop/entities/{eid}",f"/ocop/products/{pid}",f"/ocop/applications/{aid}"):
             self.assertEqual(self.a.request("GET",route)[0],200,route)
         self.assertIn(self.b.request("GET",f"/ocop/applications/{aid}")[0],(403,404))
         self.assertNotIn("Muối sạch thử nghiệm".encode(), self.b.request("GET","/ocop/products?unit=27673")[2])
         self.assertIn(self.action(self.b,aid,"submit")[0],(403,404))
+        product = self.row("SELECT * FROM ocop_products WHERE id=?", (pid,))
+        application = self.row("SELECT * FROM ocop_applications WHERE id=?", (aid,))
+        criteria = self.row("SELECT * FROM ocop_criteria_sets WHERE code='QD26-10'")
+        self.assertEqual(product["criteria_set_id"], criteria["id"])
+        self.assertEqual(application["criteria_set_id"], criteria["id"])
+        self.assertEqual(product["product_group"], "Gia vị")
         self.assertEqual(self.action(self.a,aid,"submit")[0],303)
         application=self.row("SELECT * FROM ocop_applications WHERE id=?",(aid,))
         self.assertEqual(application["status"],"submitted")
@@ -218,7 +226,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(self.a.request("POST",f"/ocop/entities/{eid}/edit",entity_data)[0],303)
         self.assertEqual(self.a.request("POST",f"/ocop/entities/{eid}/edit",entity_data)[0],409)
         product=self.row("SELECT * FROM ocop_products WHERE id=?",(pid,))
-        product_data={"name":"Muối đã chỉnh sửa","ma_co_so":product["ma_co_so"],"product_group":"Gia vị",
+        product_data={"name":"Muối đã chỉnh sửa","ma_co_so":product["ma_co_so"],"criteria_set_id":product["criteria_set_id"],
                       "description":"Đã bổ sung","updated_at":product["updated_at"],"current_star":"5","status":"completed"}
         self.assertEqual(self.a.request("POST",f"/ocop/products/{pid}/edit",product_data)[0],303)
         product=self.row("SELECT * FROM ocop_products WHERE id=?",(pid,))
@@ -269,6 +277,45 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(status,200,body.decode())
         self.assertIn(b'CHOICE0204',body)
         self.assertNotIn("Sản phẩm đơn vị B".encode(),self.a.request("GET","/ocop/applications/new")[2])
+
+    def test_dynamic_criteria_catalog_and_product_requirement(self):
+        for client in (self.admin, self.a):
+            status, _, body = client.request("GET", "/ocop/criteria")
+            self.assertEqual(status, 200)
+            self.assertIn("QD26-10".encode(), body)
+            self.assertIn("Gia vị khác (muối, hành, tỏi, tiêu)".encode(), body)
+            status, _, body = client.request("GET", "/ocop/criteria/10")
+            self.assertEqual(status, 200)
+            self.assertIn("40 điểm".encode(), body)
+            self.assertIn("25 điểm".encode(), body)
+            self.assertIn("35 điểm".encode(), body)
+        status, _, body = self.a.request("GET", "/ocop/products/new")
+        self.assertEqual(status, 200)
+        self.assertEqual(body.count(b'<option value='), 28)  # empty + entity + 26 criteria options
+        self.assertIn(b'name="criteria_set_id"', body)
+        self.assertNotIn(b'name="product_group"', body)
+
+        status, headers, body = self.a.request("POST", "/ocop/entities/new", {
+            "name":"HTX thiếu tiêu chí", "facility_type":"Hợp tác xã", "address":"Test",
+            "ma_don_vi_hanh_chinh":"27673"})
+        self.assertEqual(status, 303)
+        entity_id = int(headers["Location"].rsplit("/",1)[1])
+        entity = self.row("SELECT * FROM ocop_entities WHERE id=?", (entity_id,))
+        status, _, _ = self.a.request("POST", "/ocop/products/new", {
+            "name":"Sản phẩm thiếu tiêu chí", "ma_co_so":entity["ma_co_so"], "description":""})
+        self.assertEqual(status, 400)
+        self.assertEqual(self.row("SELECT COUNT(*) AS n FROM ocop_products")["n"], 0)
+        self.assertEqual(self.a.request("POST", "/ocop/criteria/10", {})[0], 404)
+
+    def test_application_snapshot_freezes_criteria_set(self):
+        _eid, pid, aid = self.create_ocop()
+        self.assertEqual(self.action(self.a, aid, "submit")[0], 303)
+        row = self.row("SELECT * FROM ocop_applications WHERE id=?", (aid,))
+        import json
+        snapshot = json.loads(row["submission_snapshot_json"])
+        self.assertEqual(snapshot["schema_version"], 2)
+        self.assertEqual(snapshot["criteria_set"]["code"], "QD26-10")
+        self.assertEqual(snapshot["criteria_set"]["legal_document"], "26/2026/QĐ-TTg")
 
     def test_salt_create_edit_submit_return_approve_and_standard_data(self):
         data={"report_date":"2026-08-15","unit_name":"Xã Thạnh An","area_land":"2","harvest_land":"6",

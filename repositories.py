@@ -80,11 +80,10 @@ def postgres_application_ready(con):
     required = {
         "users", "user_credentials", "user_identities", "records", "audit_logs",
         "user_admin_units", "ocop_entities", "ocop_products", "ocop_applications",
-        "ocop_reviews",
+        "ocop_reviews", "ocop_criteria_sets", "ocop_criteria", "ocop_criteria_options",
     }
     rows = con.execute(
         """SELECT table_name FROM information_schema.tables
            WHERE table_schema='app'"""
     ).fetchall()
     return required <= {row[0] for row in rows}
-

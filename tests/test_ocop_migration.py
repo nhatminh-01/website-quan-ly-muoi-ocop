@@ -40,14 +40,27 @@ EXPECTED_COLUMNS = {
     "ocop_products": {
         "id", "ma_san_pham", "ma_co_so", "ma_don_vi_hanh_chinh", "ten_san_pham",
         "product_group", "description", "current_star", "status", "created_by",
-        "created_at", "updated_at",
+        "created_at", "updated_at", "criteria_set_id",
     },
     "ocop_applications": {
         "id", "product_id", "evaluation_type", "year", "status", "submitted_at",
         "checked_at", "reviewer_id", "reviewer_note", "created_by", "created_at",
-        "updated_at", "revision", "submission_snapshot_json",
+        "updated_at", "revision", "submission_snapshot_json", "criteria_set_id",
     },
     "ocop_reviews": {"id", "application_id", "reviewer_id", "action", "comment", "created_at"},
+    "ocop_criteria_sets": {
+        "id", "code", "name", "product_category", "product_group", "product_subgroup",
+        "legal_document", "version", "effective_from", "effective_to", "max_score",
+        "active", "sort_order", "notes", "created_at", "updated_at",
+    },
+    "ocop_criteria": {
+        "id", "criteria_set_id", "parent_id", "code", "title", "item_type",
+        "section_code", "max_score", "requirement_text", "sort_order", "active",
+    },
+    "ocop_criteria_options": {
+        "id", "criterion_id", "label", "score", "min_star", "is_eliminating",
+        "evidence_hint", "sort_order", "active",
+    },
 }
 
 
@@ -156,7 +169,7 @@ class OcopMigrationTests(unittest.TestCase):
         self.assertEqual(self.con.execute("PRAGMA integrity_check").fetchone()[0], "ok")
         self.assertEqual(self.con.execute("SELECT COUNT(*) FROM PTNT_OCOP").fetchone()[0], 0)
 
-    def test_complete_stage_one_contract_without_later_stage_tables(self):
+    def test_complete_stage_two_contract(self):
         ocop_db.migrate(self.con)
         tables = {row[0] for row in self.con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         self.assertEqual(tables - set(LEGACY_TABLES) - {"sqlite_sequence"}, set(EXPECTED_COLUMNS))
@@ -170,17 +183,90 @@ class OcopMigrationTests(unittest.TestCase):
         for name in ("module", "object_type", "object_id"):
             self.assertEqual(audit[name][2:6], ("TEXT", 0, None, 0))
 
-    def test_repeat_is_byte_identical_and_has_one_version_marker(self):
+    def test_repeat_is_byte_identical_and_has_two_version_markers(self):
         ocop_db.migrate(self.con)
         before = self.con.serialize()
         original_changes = self.con.total_changes
-        original_marker = tuple(self.con.execute("SELECT * FROM schema_migrations").fetchone())
+        original_markers = [tuple(row) for row in self.con.execute("SELECT * FROM schema_migrations ORDER BY version")]
         result = ocop_db.migrate(self.con)
         self.assertFalse(result["applied"])
         self.assertEqual(result["mapped_units"], 0)
         self.assertEqual(self.con.serialize(), before)
         self.assertEqual(self.con.total_changes, original_changes)
-        self.assertEqual([tuple(row) for row in self.con.execute("SELECT * FROM schema_migrations")], [original_marker])
+        self.assertEqual([tuple(row) for row in self.con.execute("SELECT * FROM schema_migrations ORDER BY version")], original_markers)
+        self.assertEqual([row[0] for row in original_markers], [ocop_db.FOUNDATION_VERSION, ocop_db.MIGRATION_VERSION])
+
+    def test_stage_two_seeds_26_dynamic_sets_and_three_score_sections_each(self):
+        ocop_db.migrate(self.con)
+        sets = [dict(row) for row in self.con.execute(
+            "SELECT * FROM ocop_criteria_sets ORDER BY sort_order"
+        )]
+        self.assertEqual(len(sets), 26)
+        self.assertEqual([row["code"] for row in sets], [f"QD26-{i:02d}" for i in range(1, 27)])
+        self.assertEqual(sets[9]["name"], "Gia vị khác (muối, hành, tỏi, tiêu)")
+        self.assertEqual(sets[9]["product_category"], "Thực phẩm")
+        self.assertEqual(sets[9]["product_group"], "Gia vị")
+        self.assertTrue(all(row["legal_document"] == "26/2026/QĐ-TTg" for row in sets))
+        self.assertTrue(all(row["effective_from"] == "2026-05-22" for row in sets))
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM ocop_criteria").fetchone()[0], 78)
+        self.assertEqual(self.con.execute("SELECT COUNT(*) FROM ocop_criteria_options").fetchone()[0], 0)
+        totals = self.con.execute(
+            "SELECT criteria_set_id,COUNT(*),SUM(max_score) FROM ocop_criteria GROUP BY criteria_set_id"
+        ).fetchall()
+        self.assertEqual(len(totals), 26)
+        self.assertTrue(all(count == 3 and float(total) == 100.0 for _sid, count, total in totals))
+        self.assertEqual(
+            [tuple(row) for row in self.con.execute(
+                "SELECT code,max_score FROM ocop_criteria WHERE criteria_set_id=? ORDER BY sort_order",
+                (sets[9]["id"],),
+            )],
+            [("A", 40.0), ("B", 25.0), ("C", 35.0)],
+        )
+
+    def test_stage_two_links_are_nullable_and_preserve_preexisting_ocop_rows(self):
+        # Build the phase-one tables explicitly, put rows in them, then let migrate add phase two.
+        for sql in ocop_db.TABLES.values():
+            self.con.execute(sql)
+        self.con.execute("ALTER TABLE audit_logs ADD COLUMN module TEXT")
+        self.con.execute("ALTER TABLE audit_logs ADD COLUMN object_type TEXT")
+        self.con.execute("ALTER TABLE audit_logs ADD COLUMN object_id TEXT")
+        self.con.execute(
+            "INSERT INTO DM_CoSo(Ma_CoSo,TenCoSo,LoaiCoSo,Ma_DonViHanhChinh) VALUES('CSOLD','Cơ sở cũ','Hợp tác xã','90001')"
+        )
+        self.con.execute(
+            "INSERT INTO ocop_entities(ma_co_so,created_by,created_at,updated_at) VALUES('CSOLD',2,'old','old')"
+        )
+        self.con.execute("INSERT INTO DM_SanPham(Ma_SanPham,TenSanPham,NhomSanPham) VALUES('SPOLD','Sản phẩm cũ','Nhóm cũ')")
+        self.con.execute(
+            """INSERT INTO ocop_products(ma_san_pham,ma_co_so,ma_don_vi_hanh_chinh,ten_san_pham,product_group,description,status,created_by,created_at,updated_at)
+               VALUES('SPOLD','CSOLD','90001','Sản phẩm cũ','Nhóm cũ','','active',2,'old','old')"""
+        )
+        product_id = self.con.execute("SELECT id FROM ocop_products WHERE ma_san_pham='SPOLD'").fetchone()[0]
+        self.con.execute(
+            """INSERT INTO ocop_applications(product_id,evaluation_type,year,status,created_by,created_at,updated_at)
+               VALUES(?,'new',2026,'draft',2,'old','old')""", (product_id,)
+        )
+        self.con.execute(
+            "INSERT INTO schema_migrations(version,applied_at) VALUES(?, 'old')", (ocop_db.FOUNDATION_VERSION,)
+        )
+        self.con.commit()
+        before_product = tuple(self.con.execute("SELECT * FROM ocop_products").fetchone())
+        before_application = tuple(self.con.execute("SELECT * FROM ocop_applications").fetchone())
+        result = ocop_db.migrate(self.con)
+        self.assertEqual(result["versions_applied"], [ocop_db.MIGRATION_VERSION])
+        after_product = tuple(self.con.execute("SELECT * FROM ocop_products").fetchone())
+        after_application = tuple(self.con.execute("SELECT * FROM ocop_applications").fetchone())
+        self.assertEqual(after_product, before_product + (None,))
+        self.assertEqual(after_application, before_application + (None,))
+
+    def test_conflicting_seed_is_refused_without_overwrite(self):
+        ocop_db.migrate(self.con)
+        self.con.execute("UPDATE ocop_criteria_sets SET name='Sai dữ liệu' WHERE code='QD26-10'")
+        self.con.commit()
+        before = self.con.serialize()
+        with self.assertRaisesRegex(ocop_db.MigrationError, "QD26-10"):
+            ocop_db.migrate(self.con)
+        self.assertEqual(self.con.serialize(), before)
 
     def test_partial_table_is_rejected_without_changes(self):
         self.con.execute("CREATE TABLE ocop_entities(id INTEGER PRIMARY KEY)")

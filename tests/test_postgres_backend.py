@@ -4,6 +4,13 @@ import unittest
 from uuid import uuid4
 
 import server
+from backend_db import translate_sql
+
+
+class PostgreSQLTranslationTests(unittest.TestCase):
+    def test_sqlite_null_safe_inequality_is_translated(self):
+        sql, _ = translate_sql("UPDATE ocop_applications SET criteria_set_id=? WHERE criteria_set_id IS NOT ?")
+        self.assertIn("criteria_set_id IS DISTINCT FROM %s", sql)
 
 
 @unittest.skipUnless(server.using_postgres(), "PostgreSQL runtime is not enabled")

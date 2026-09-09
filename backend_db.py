@@ -98,6 +98,9 @@ _IDENTITY_TABLES = {
     "ocop_products",
     "ocop_applications",
     "ocop_reviews",
+    "ocop_criteria_sets",
+    "ocop_criteria",
+    "ocop_criteria_options",
 }
 
 
@@ -154,6 +157,7 @@ def translate_sql(sql: str) -> tuple[str, str | None]:
         flags=re.I,
     )
     translated = re.sub(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", "INSERT INTO", translated, flags=re.I)
+    translated = re.sub(r"\bIS\s+NOT\s+%s\b", "IS DISTINCT FROM %s", translated, flags=re.I)
 
     insert = re.match(r"\s*INSERT\s+INTO\s+(?:[A-Za-z_][\w]*\.)?([A-Za-z_][\w]*)", translated, re.I)
     table = insert.group(1).casefold() if insert else None
