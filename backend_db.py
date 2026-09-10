@@ -114,6 +114,8 @@ _IDENTITY_TABLES = {
     "ocop_criteria_sets",
     "ocop_criteria",
     "ocop_criteria_options",
+    "salt_import_batches",
+    "salt_weekly_records",
 }
 
 

@@ -22,6 +22,7 @@ SPEC.loader.exec_module(ocop_db)
 LEGACY_TABLES = (
     "users", "records", "audit_logs", "DM_DonViHanhChinh",
     "DM_KhoangThoiGian", "DN_SanLuongMuoi",
+    "salt_import_batches", "salt_weekly_import_rows", "salt_weekly_records",
 )
 
 EXPECTED_COLUMNS = {

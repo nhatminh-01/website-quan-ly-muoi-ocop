@@ -343,40 +343,54 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(self.a.request("GET","/users")[0],403)
         self.assertEqual(self.a.request("GET","/import-excel")[0],403)
 
-    def test_salt_excel_import_export_filters_and_no_ocop_side_effects(self):
-        from openpyxl import Workbook, load_workbook
+    def test_weekly_excel_preview_commit_lookup_and_no_ocop_side_effects(self):
+        from openpyxl import Workbook
         wb=Workbook();ws=wb.active;ws.title="Mau"
         ws.append(["STT","Đơn vị"])
         row=[None]*27
-        row[0]=1;row[1]="Xã An Thới Đông";row[3]=2;row[4]=1;row[6]=10;row[7]=5
+        row[0]=1;row[1]="Xã An Thới Đông";row[2]=3;row[3]=2;row[4]=1;row[5]=15;row[6]=10;row[7]=5
         row[18]=2;row[19]=4;row[20]="1.000 - 1.500";row[21]="2.000"
         ws.append(row)
         row2=list(row);row2[0]=2;row2[1]="Xã Thạnh An";ws.append(row2)
         out=io.BytesIO();wb.save(out)
         boundary="TEST_OCOP_BOUNDARY"
-        def upload(client, mode="skip"):
+        def upload(client):
             parts=[]
-            for key,value in {"csrf":client.csrf,"report_date":"2026-07-01","sheet_name":"Mau","mode":mode}.items():
+            for key,value in {"csrf":client.csrf,"report_date":"2026-07-01","sheet_name":"Mau"}.items():
                 parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{key}"\r\n\r\n{value}\r\n'.encode())
             parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="excel_file"; filename="sample.xlsx"\r\nContent-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet\r\n\r\n'.encode()+out.getvalue()+b'\r\n')
             parts.append(f'--{boundary}--\r\n'.encode())
             return client.request("POST","/import-excel",b''.join(parts),content_type=f"multipart/form-data; boundary={boundary}")
         self.assertEqual(upload(self.a)[0],403)
-        self.assertEqual(upload(self.admin)[0],303)
-        self.assertEqual(self.row("SELECT COUNT(*) AS n FROM records")["n"],2)
-        self.assertEqual(upload(self.admin)[0],303)
-        self.assertEqual(upload(self.admin,"update")[0],303)
-        self.assertEqual(self.row("SELECT COUNT(*) AS n FROM records")["n"],2)
-        self.assertEqual(self.row("SELECT COUNT(*) AS n FROM DN_SanLuongMuoi")["n"],4)
-        status,_,body=self.a.request("GET","/export.xlsx?unit=X%C3%A3+Th%E1%BA%A1nh+An")
-        self.assertEqual(status,200)
-        exported=load_workbook(io.BytesIO(body),data_only=True)
-        cells=[v for row in exported.active.iter_rows(values_only=True) for v in row if v is not None]
-        self.assertIn("Xã An Thới Đông",cells)
-        self.assertNotIn("Xã Thạnh An",cells)
-        self.assertEqual(exported.active.max_column,27)
+        status,headers,_=upload(self.admin)
+        self.assertEqual((status,headers['Location']),(303,'/import-excel/preview'))
+        status,_,body=self.admin.request('GET','/import-excel/preview')
+        self.assertEqual(status,200);self.assertIn('2026-W27',body.decode())
+        self.assertEqual(self.row("SELECT COUNT(*) AS n FROM salt_weekly_records")["n"],0)
+        status,headers,_=self.admin.request('POST','/import-excel/confirm',{'mode':'skip'})
+        self.assertEqual(status,303);self.assertIn('/salt/weekly?week=2026-W27',headers['Location'])
+        self.assertEqual(self.row("SELECT COUNT(*) AS n FROM salt_weekly_records")["n"],2)
+        self.assertEqual(self.row("SELECT COUNT(*) AS n FROM records")["n"],0)
+        self.assertEqual(self.row("SELECT COUNT(*) AS n FROM DN_SanLuongMuoi")["n"],0)
+        dashboard=self.admin.request('GET','/dashboard')[2].decode()
+        self.assertIn('Mau · 2026-W27',dashboard)
+        self.assertIn('Chưa có sheet trước để so sánh',dashboard)
+        self.assertIn('2</div><div class="status-card-label">Đơn vị trong kỳ',dashboard)
+        body=self.admin.request('GET','/salt/weekly?week=2026-W27')[2].decode()
+        self.assertIn('1</strong><span>sheet báo cáo',body)
+        self.assertIn('Mỗi sheet là một báo cáo',body)
+        self.assertIn('class="excel-sheet"',body)
+        self.assertIn('Xã An Thới Đông',body)
+        self.assertIn('class="salt-tab active" href="/salt/weekly"',body)
+        self.assertIn('Tra cứu theo tuần',body)
+        unit_body=self.a.request('GET','/salt/weekly?week=2026-W27')[2].decode()
+        self.assertIn('Xã An Thới Đông',unit_body);self.assertNotIn('Xã Thạnh An',unit_body)
+        self.assertNotIn('Import Excel tuần',unit_body)
+        upload(self.admin)
+        self.admin.request('POST','/import-excel/confirm',{'mode':'skip'})
+        self.assertEqual(self.row("SELECT COUNT(*) AS n FROM salt_import_batches")["n"],1)
         con=self.db()
-        salt_before={t:[tuple(r) for r in con.execute('SELECT * FROM '+t)] for t in ('records','DN_SanLuongMuoi')}
+        salt_before={t:[tuple(r) for r in con.execute('SELECT * FROM '+t)] for t in ('records','DN_SanLuongMuoi','salt_weekly_records')}
         con.close()
         self.create_ocop()
         con=self.db()

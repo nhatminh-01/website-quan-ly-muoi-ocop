@@ -63,7 +63,7 @@ class RoleAccountTests(unittest.TestCase):
         self.assertIn('Chuyên viên Chi cục',staff.request('GET','/dashboard')[2].decode())
         self.assertNotIn('href="/users"',staff.request('GET','/dashboard')[2].decode())
 
-    def test_staff_return_approve_and_method_upserts(self):
+    def test_staff_return_approve_and_traditional_upsert(self):
         staff,_ = self.staff()
         rid = self.report(self.a)
         self.assertEqual(self.a.request('POST',f'/records/{rid}/submit',{})[0],303)
@@ -78,8 +78,8 @@ class RoleAccountTests(unittest.TestCase):
             after = [tuple(r) for r in con.execute('SELECT * FROM DN_SanLuongMuoi ORDER BY PhuongPhapSX')]
             self.assertEqual(before,after)
             rows = {r['PhuongPhapSX']:dict(r) for r in con.execute('SELECT * FROM DN_SanLuongMuoi')}
-            self.assertEqual((rows['Truyền thống']['DienTich'],rows['Truyền thống']['SanLuong'],rows['Truyền thống']['GiaBanBinhQuan']),(2,10,1200))
-            self.assertEqual((rows['Trải bạt']['DienTich'],rows['Trải bạt']['SanLuong'],rows['Trải bạt']['GiaBanBinhQuan']),(3,20,0))
+            self.assertEqual(set(rows),{'Truyền thống'})
+            self.assertEqual((rows['Truyền thống']['DienTich'],rows['Truyền thống']['SanLuong'],rows['Truyền thống']['GiaBanBinhQuan']),(5,30,0))
             con.execute("UPDATE records SET area_tarp=0,harvest_tarp=0,price_tarp='' WHERE id=?",(rid,))
             server.sync_standard_salt_record(con,record)
             self.assertEqual(con.execute('SELECT COUNT(*) FROM DN_SanLuongMuoi').fetchone()[0],1)

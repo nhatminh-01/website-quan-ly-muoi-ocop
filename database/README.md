@@ -57,6 +57,8 @@ Stop-Service -Name 'postgresql-x64-17'
 & 'C:\Program Files\PostgreSQL\17\bin\psql.exe' -h localhost -p 5432 -U postgres -d ptnt_qd5277_dev -f sql\006_official_admin_units.sql
 & 'C:\Program Files\PostgreSQL\17\bin\psql.exe' -h localhost -p 5432 -U postgres -d ptnt_qd5277_dev -f sql\007_ocop_init_only.sql
 & 'C:\Program Files\PostgreSQL\17\bin\psql.exe' -h localhost -p 5432 -U postgres -d ptnt_qd5277_dev -f sql\008_ocop_dynamic_criteria.sql
+& 'C:\Program Files\PostgreSQL\17\bin\psql.exe' -h localhost -p 5432 -U postgres -d ptnt_qd5277_dev -f sql\009_staff_role.sql
+& 'C:\Program Files\PostgreSQL\17\bin\psql.exe' -h localhost -p 5432 -U postgres -d ptnt_qd5277_dev -f sql\010_weekly_salt_imports.sql
 ```
 
 Migration dữ liệu website SQLite cũ (chạy lặp an toàn):
@@ -84,10 +86,10 @@ Importer đọc workbook hai lần: `data_only=False` để giữ formula và `d
 Mapping target theo phương pháp (không dùng tổng C/F):
 
 - B → mã hành chính; kỳ snapshot → `2026-08`.
-- D/G/T → diện tích/sản lượng/giá `Truyền thống`.
-- E/H/U → diện tích/sản lượng/giá `Trải bạt`.
-- Giá đơn rõ ràng được giữ; khoảng giá/giá không rõ → NULL, nguồn vẫn ở staging.
-- Bỏ phương pháp rỗng/toàn 0. UPSERT theo đơn vị/kỳ/phương pháp; không xóa staging.
+- C/F → tổng `DienTich`/`SanLuong` của một record `PhuongPhapSX = 'Truyền thống'`.
+- D/G và E/H là chi tiết nền đất/nền trải bạt, được giữ ở staging để đối chiếu C/F.
+- T/U chỉ giữ ở staging; `GiaBanBinhQuan` để NULL vì source không có một giá bình quân chung đáng tin cậy.
+- Bỏ địa bàn rỗng/toàn 0. UPSERT theo đơn vị/kỳ/phương pháp; không xóa staging.
 
 ## Chạy validation
 
@@ -110,7 +112,15 @@ SELECT COUNT(*) AS records,
 FROM qd5277.DN_SanLuongMuoi;
 ```
 
-Số dòng target phụ thuộc các phương pháp có dữ liệu (tối đa 16 cho 8 địa bàn). Đối chiếu D/E và G/H riêng; không ép tổng chi tiết bằng cột tổng nếu workbook nguồn có sai lệch.
+Số dòng target tối đa 8 cho 8 địa bàn. Validation đối chiếu C với D+E và F với G+H nhưng giữ nguyên C/F nếu nguồn có sai lệch.
+
+## Import báo cáo tuần trong website
+
+- `app.salt_import_batches` lưu nguồn gốc và kết quả từng đợt import.
+- `staging.salt_weekly_import_rows` giữ đủ 28 ô raw/cached để truy vết.
+- `app.salt_weekly_records` lưu một record cho mỗi xã/tuần, gồm tổng chuẩn và chi tiết hai loại nền.
+- `app.v_dn_sanluongmuoi_weekly_qd5277` trả bảy trường tương thích `qd5277.DN_SanLuongMuoi` nhưng chưa xuất bản dữ liệu tuần vào bảng chuẩn chính thức.
+- Import gồm hai bước xem trước và xác nhận; dòng lỗi bị chặn, dòng cảnh báo phải được người dùng nhìn thấy trước khi ghi.
 
 ## Nâng cấp tài khoản và chuyển OCOP
 

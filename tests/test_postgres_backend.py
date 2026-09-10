@@ -18,6 +18,7 @@ import server
 import backend_db
 import ocop_db
 import ocop_services as svc
+from weekly_import import WeeklyImportError, parse_weekly_workbook, commit_weekly_preview
 from database.migration import migrate_sqlite_to_postgres as migration
 from test_integration import legacy_schema, Client
 
@@ -42,7 +43,8 @@ class PostgreSQLBackendTests(unittest.TestCase):
         with self.connection(autocommit=True) as con:
             for name in ('002_qd5277_schema.sql','004_app_schema.sql','005_monthly_salt_sync.sql',
                          '006_official_admin_units.sql','007_ocop_init_only.sql',
-                         '008_ocop_dynamic_criteria.sql','009_staff_role.sql'):
+                         '008_ocop_dynamic_criteria.sql','009_staff_role.sql',
+                         '010_weekly_salt_imports.sql'):
                 con.execute((Path(server.__file__).parent/'database/sql'/name).read_text(encoding='utf-8'))
         self.temp=tempfile.TemporaryDirectory(prefix='ocop-pg-source-')
         self.addCleanup(self.temp.cleanup)
@@ -92,15 +94,14 @@ class PostgreSQLBackendTests(unittest.TestCase):
             con.execute((Path(server.__file__).parent/'database/sql/009_staff_role.sql').read_text())
             self.assertEqual(con.execute('SELECT COUNT(*) FROM users').fetchone()[0],4)
 
-    def test_salt_separate_methods_exact_prices_and_latest_month(self):
+    def test_salt_foundations_are_one_traditional_method_and_latest_month(self):
         self.migrate()
         with self.connection() as con:
             rows=con.execute('SELECT * FROM DN_SanLuongMuoi ORDER BY PhuongPhapSX').fetchall()
-            self.assertEqual(len(rows),2)
+            self.assertEqual(len(rows),1)
             by={r['PhuongPhapSX']:r for r in rows}
-            self.assertEqual((by['Truyền thống']['DienTich'],by['Truyền thống']['SanLuong'],by['Truyền thống']['GiaBanBinhQuan']),(2,10,1200))
-            self.assertEqual((by['Trải bạt']['DienTich'],by['Trải bạt']['SanLuong']),(3,20))
-            self.assertIsNone(by['Trải bạt']['GiaBanBinhQuan'])
+            self.assertEqual((by['Truyền thống']['DienTich'],by['Truyền thống']['SanLuong']),(5,30))
+            self.assertIsNone(by['Truyền thống']['GiaBanBinhQuan'])
             con.execute("INSERT INTO app.records(report_date,unit_name,created_by,area_land,status,created_at,updated_at,ma_don_vi_hanh_chinh) VALUES('2026-08-01','Xã An Thới Đông',2,999,'approved','d','d','27673')")
             migration.repair_salt(con)
             self.assertEqual(con.execute('SELECT SUM(DienTich) FROM DN_SanLuongMuoi').fetchone()[0],5)
@@ -127,7 +128,7 @@ class PostgreSQLBackendTests(unittest.TestCase):
             self.assertEqual(con.execute('SELECT COUNT(*) FROM ocop_products').fetchone()[0],0)
             self.assertEqual(con.execute('SELECT COUNT(*) FROM PTNT_OCOP').fetchone()[0],0)
 
-    def test_excel_etl_upsert_keeps_staging_and_both_methods(self):
+    def test_excel_etl_upsert_keeps_staging_and_aggregates_foundations(self):
         from openpyxl import Workbook
         from psycopg.conninfo import conninfo_to_dict
         from database.etl import import_diem_nghiep as etl
@@ -135,20 +136,45 @@ class PostgreSQLBackendTests(unittest.TestCase):
         wb=Workbook();ws=wb.active;ws.title=etl.SHEET_NAME
         for row,name in zip(etl.DATA_ROWS,server.UNITS):
             ws.cell(row,2,name)
-            for col,value in ((4,2),(5,3),(7,10),(8,20),(20,1200),(21,'2.000 - 2.500')):
+            for col,value in ((3,5),(4,2),(5,3),(6,30),(7,10),(8,20),(20,1200),(21,'2.000 - 2.500')):
                 ws.cell(row,col,value)
         wb.save(workbook);wb.close()
         options=conninfo_to_dict(self.dsn);options['dbname']=self.name
         with patch.object(etl,'connection_kwargs',lambda:options):
-            self.assertEqual(etl.import_workbook(workbook),(8,16))
+            self.assertEqual(etl.import_workbook(workbook),(8,8))
             with self.connection() as con:
                 # An unrelated source sheet must survive repeat import.
-                con.execute("INSERT INTO staging.diem_nghiep_2026_w34_raw(source_sheet,excel_row,snapshot_date,source_workbook) VALUES('other-sheet',99,'2026-08-21','keep.xlsx')")
-            self.assertEqual(etl.import_workbook(workbook),(8,16))
+                con.execute("INSERT INTO staging.diem_nghiep_2026_w34_raw(source_sheet,excel_row,snapshot_date,source_workbook,value_kinds) VALUES('other-sheet',99,'2026-08-21','keep.xlsx','{}'::jsonb)")
+            self.assertEqual(etl.import_workbook(workbook),(8,8))
         with self.connection() as con:
             self.assertEqual(con.execute('SELECT COUNT(*) FROM staging.diem_nghiep_2026_w34_raw').fetchone()[0],9)
-            self.assertEqual(con.execute('SELECT COUNT(*) FROM DN_SanLuongMuoi').fetchone()[0],16)
-            self.assertEqual(con.execute("SELECT SUM(DienTich) FROM DN_SanLuongMuoi WHERE PhuongPhapSX='Trải bạt'").fetchone()[0],24)
+            self.assertEqual(con.execute('SELECT COUNT(*) FROM DN_SanLuongMuoi').fetchone()[0],8)
+            self.assertEqual(con.execute("SELECT SUM(DienTich) FROM DN_SanLuongMuoi WHERE PhuongPhapSX='Truyền thống'").fetchone()[0],40)
+
+    def test_weekly_preview_commit_is_qd_shaped_and_rejects_duplicate_file(self):
+        from openpyxl import Workbook
+        self.migrate()
+        workbook=Path(self.temp.name)/'weekly.xlsx'
+        wb=Workbook();ws=wb.active;ws.title='Tuan 34'
+        ws.append(['STT','Đơn vị'])
+        for index,name in enumerate(('Xã An Thới Đông','Xã Thạnh An'),1):
+            row=[None]*28;row[0]=index;row[1]=name
+            row[2]=5;row[3]=2;row[4]=3;row[5]=30;row[6]=10;row[7]=20
+            ws.append(row)
+        wb.save(workbook);wb.close()
+        preview=parse_weekly_workbook(workbook.read_bytes(),'2026-08-21','Tuan 34',workbook.name,server.canonical_admin_unit)
+        self.assertEqual((preview['week_code'],preview['error_rows']),('2026-W34',0))
+        with self.connection() as raw:
+            con=backend_db.CompatConnection(raw)
+            result=commit_weekly_preview(con,{'user_id':3},preview,'skip',server.now_text())
+            self.assertEqual(result['inserted'],2)
+        with self.connection() as raw:
+            rows=raw.execute('SELECT * FROM app.v_dn_sanluongmuoi_weekly_qd5277 ORDER BY Ma_DonViHanhChinh').fetchall()
+            self.assertEqual(len(rows),2)
+            self.assertEqual((rows[0]['Ma_ThoiGian'],rows[0]['PhuongPhapSX'],rows[0]['DienTich'],rows[0]['SanLuong']),('2026-W34','Truyền thống',5,30))
+            con=backend_db.CompatConnection(raw)
+            with self.assertRaisesRegex(WeeklyImportError,'đã được import'):
+                commit_weekly_preview(con,{'user_id':3},preview,'skip',server.now_text())
 
     def test_criteria_parent_order_options_and_source_pk_are_preserved(self):
         with sqlite3.connect(self.source) as con:

@@ -2,14 +2,33 @@
 
 Tài liệu này ghi lại các thay đổi đáng chú ý của hệ thống Quản lý muối – OCOP.
 
+## Chưa phát hành — Đồng bộ quy tắc nền sản xuất muối
+
+- Thêm luồng import báo cáo tuần hai bước: xem trước/validation rồi mới xác nhận ghi dữ liệu.
+- Thêm bảng đợt import, staging raw, record tuần và view tuần tương thích cấu trúc `DN_SanLuongMuoi`.
+- Đổi trang tra cứu tuần sang mô hình một sheet import là một báo cáo; xã/phường là dòng con, không phải record báo cáo độc lập.
+- Cho phép chọn sheet đã import và render lại bảng 28 cột theo bố cục Excel, gồm tiêu đề nhóm, tổng cộng, ngày chốt và nguồn file.
+- Tối ưu đọc Excel theo một lượt tuần tự; sheet có 1.000 dòng định dạng không còn treo lâu. Nút import hiển thị trạng thái đang kiểm tra sau khi gửi.
+- Dashboard đọc sheet tuần theo ngày chốt, cho phép chọn kỳ và hiển thị chênh lệch so với sheet liền trước; không cộng chồng dữ liệu lũy tiến.
+- Thay các thẻ trạng thái báo cáo cũ bằng số sheet, số đơn vị, cảnh báo và kỳ so sánh; bảng chi tiết lấy trực tiếp từ dòng con của sheet.
+- Tab dữ liệu chuẩn QĐ 5277 được ghi rõ chỉ nhận báo cáo tháng đã duyệt; dữ liệu tuần không tự xuất bản vào bảng tháng.
+- Thêm thanh tab Diêm nghiệp trên các màn hình dữ liệu, giúp chuyển trực tiếp giữa dữ liệu báo cáo, tra cứu tuần và import Excel tuần.
+- Làm sạch 32 báo cáo app, 33 audit log, 24 dòng muối chuẩn và staging ETL cũ; import sheet `21.8-Tuan 34` gồm 8 đơn vị cho tuần `2026-W34`. Tài khoản, cấu trúc và danh mục QĐ 5277 được giữ nguyên.
+- Tạo bản sao lưu trước khi làm sạch tại `DB/backups/before_weekly_2026-W34_20260910.dump` (file backup nằm ngoài repository website).
+- Dữ liệu tuần chưa tự ghi vào `qd5277.DN_SanLuongMuoi`; template và quy tắc báo cáo tháng sẽ triển khai riêng.
+- Muối nền đất và nền trải bạt cùng được tổng hợp thành một record `PhuongPhapSX = 'Truyền thống'` trong `qd5277.DN_SanLuongMuoi`.
+- Chi tiết hai loại nền tiếp tục được giữ trong `app.records` và staging; không thêm cột ngoài cấu trúc QĐ 5277.
+- `Công nghiệp` là một giá trị được QĐ 5277 mô tả cho `PhuongPhapSX`, không phải một trường riêng; app chưa thêm đầu vào khi chưa có dữ liệu thực tế.
+- `GiaBanBinhQuan` để NULL vì hai giá nguồn theo nền không đủ để suy ra một giá bình quân chung.
+
 ## 2026-09-10 — Sidebar, chuyên viên và migration dữ liệu
 
 - Sidebar Diêm nghiệp/OCOP mở đóng độc lập, tự mở nhóm route đang dùng; footer hai dòng căn giữa.
 - Vai trò `staff` có quyền nghiệp vụ toàn Chi cục; quản lý tài khoản và phân địa bàn chỉ dành cho `admin`.
 - Kích hoạt/ngưng kích hoạt giữ nguyên tài khoản và dữ liệu, thu hồi các phiên hiện có.
 - Đăng nhập chỉ thông báo tài khoản ngưng hoạt động khi mật khẩu đúng.
-- Tách chuẩn hóa muối đất (`Truyền thống`) và trải bạt (`Trải bạt`); dùng chung mapping cho web, migration và ETL.
-- Giá đơn rõ ràng được lưu riêng; khoảng giá/giá không rõ giữ ở nguồn, PostgreSQL lưu NULL. SQLite giữ 0 theo ràng buộc NOT NULL hiện có, không hiểu là giá thực bằng 0.
+- Bản phát hành này từng tách muối đất (`Truyền thống`) và trải bạt (`Trải bạt`); mục “Chưa phát hành” phía trên thay thế quy tắc đó theo nghiệp vụ đã xác nhận.
+- Giá nguồn được giữ ở dữ liệu chi tiết; PostgreSQL chuẩn lưu NULL. SQLite giữ 0 theo ràng buộc NOT NULL hiện có, không hiểu là giá thực bằng 0.
 - Migration SQLite → PostgreSQL bổ sung danh mục, OCOP 2, audit metadata, kiểm tra trùng ID, rollback và dry-run. Không ghi PTNT_OCOP.
 - Thêm `009_staff_role.sql` và `migrate_roles.py` (SQLite sao lưu trước khi đổi CHECK).
 - SQLite TEST không cần psycopg/python-dotenv; kiểm thử PostgreSQL dùng database tạm riêng.

@@ -16,6 +16,7 @@ import argparse
 import hashlib
 import html
 import io
+import json
 import os
 import re
 import secrets
@@ -28,6 +29,7 @@ from backend_db import compat_connect, load_settings, INTEGRITY_ERRORS
 from permissions import (ROLE_ADMIN, ROLE_STAFF, ROLE_UNIT, ROLE_LABELS,
                          is_admin, is_chi_cuc_user, can_manage_users, can_review_records)
 from salt_normalization import sync_methods
+from weekly_import import WeeklyImportError, parse_weekly_workbook, commit_weekly_preview
 import repositories
 from datetime import datetime, date
 from http import cookies
@@ -310,6 +312,70 @@ def init_db():
             FOREIGN KEY(record_id) REFERENCES records(id) ON DELETE CASCADE,
             FOREIGN KEY(user_id) REFERENCES users(id)
         );
+
+        CREATE TABLE IF NOT EXISTS salt_import_batches(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            filename TEXT NOT NULL,
+            file_sha256 TEXT NOT NULL,
+            sheet_name TEXT NOT NULL,
+            week_code TEXT NOT NULL,
+            report_date TEXT NOT NULL,
+            template_version TEXT NOT NULL DEFAULT 'weekly-v1',
+            import_mode TEXT NOT NULL CHECK(import_mode IN ('skip','update')),
+            total_rows INTEGER NOT NULL,
+            warning_rows INTEGER NOT NULL DEFAULT 0,
+            imported_rows INTEGER NOT NULL DEFAULT 0,
+            updated_rows INTEGER NOT NULL DEFAULT 0,
+            skipped_rows INTEGER NOT NULL DEFAULT 0,
+            imported_by INTEGER NOT NULL REFERENCES users(id),
+            imported_at TEXT NOT NULL,
+            UNIQUE(file_sha256,sheet_name,week_code)
+        );
+        CREATE TABLE IF NOT EXISTS salt_weekly_import_rows(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id INTEGER NOT NULL REFERENCES salt_import_batches(id) ON DELETE CASCADE,
+            excel_row INTEGER NOT NULL,
+            unit_name_raw TEXT NOT NULL,
+            ma_don_vi_hanh_chinh TEXT,
+            validation_status TEXT NOT NULL CHECK(validation_status IN ('valid','warning')),
+            validation_messages_json TEXT NOT NULL DEFAULT '[]',
+            raw_data_json TEXT NOT NULL,
+            canonical_data_json TEXT NOT NULL,
+            UNIQUE(batch_id,excel_row)
+        );
+        CREATE TABLE IF NOT EXISTS salt_weekly_records(
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            batch_id INTEGER NOT NULL REFERENCES salt_import_batches(id),
+            week_code TEXT NOT NULL,
+            report_date TEXT NOT NULL,
+            unit_name TEXT NOT NULL,
+            ma_don_vi_hanh_chinh TEXT NOT NULL REFERENCES DM_DonViHanhChinh(Ma_DonViHanhChinh),
+            phuong_phap_sx TEXT NOT NULL DEFAULT 'Truyền thống',
+            dien_tich REAL NOT NULL CHECK(dien_tich>=0),
+            san_luong REAL NOT NULL CHECK(san_luong>=0),
+            gia_ban_binh_quan REAL CHECK(gia_ban_binh_quan IS NULL OR gia_ban_binh_quan>=0),
+            area_land REAL NOT NULL DEFAULT 0, area_tarp REAL NOT NULL DEFAULT 0,
+            harvest_land REAL NOT NULL DEFAULT 0, harvest_tarp REAL NOT NULL DEFAULT 0,
+            sold_land REAL NOT NULL DEFAULT 0, sold_tarp REAL NOT NULL DEFAULT 0,
+            remaining_land REAL NOT NULL DEFAULT 0, remaining_tarp REAL NOT NULL DEFAULT 0,
+            processed_fine REAL NOT NULL DEFAULT 0, processed_iodized REAL NOT NULL DEFAULT 0,
+            households INTEGER NOT NULL DEFAULT 0, workers INTEGER NOT NULL DEFAULT 0,
+            price_land TEXT NOT NULL DEFAULT '', price_tarp TEXT NOT NULL DEFAULT '',
+            damage_land REAL NOT NULL DEFAULT 0, damage_tarp REAL NOT NULL DEFAULT 0,
+            note TEXT NOT NULL DEFAULT '', created_by INTEGER NOT NULL REFERENCES users(id),
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+            UNIQUE(ma_don_vi_hanh_chinh,week_code)
+        );
+        CREATE INDEX IF NOT EXISTS IX_SaltWeeklyRecordPeriod
+            ON salt_weekly_records(week_code,ma_don_vi_hanh_chinh);
+        CREATE INDEX IF NOT EXISTS IX_SaltImportBatchPeriod
+            ON salt_import_batches(week_code,imported_at);
+        CREATE VIEW IF NOT EXISTS v_dn_sanluongmuoi_weekly_qd5277 AS
+        SELECT id AS Ma_SanLuongMuoi, ma_don_vi_hanh_chinh AS Ma_DonViHanhChinh,
+               week_code AS Ma_ThoiGian, phuong_phap_sx AS PhuongPhapSX,
+               dien_tich AS DienTich, san_luong AS SanLuong,
+               gia_ban_binh_quan AS GiaBanBinhQuan
+        FROM salt_weekly_records;
 
         -- =========================================================
         -- LỚP DỮ LIỆU CHUẨN HÓA THEO QUY ĐỊNH KỸ THUẬT CSDL
@@ -614,7 +680,7 @@ def ensure_standard_time(con, report_date):
 
 
 def sync_standard_salt_record(con, record):
-    """Đồng bộ báo cáo lũy tiến mới nhất theo tháng, tách riêng từng phương pháp."""
+    """Đồng bộ báo cáo lũy tiến mới nhất thành một dòng muối truyền thống/tháng."""
     if not record:
         return
 
@@ -872,6 +938,24 @@ def sidebar_group(group, items, current):
             + f'</summary><div class="sidebar-group-links">{content}</div></details>')
 
 
+def salt_data_tabs(session, current):
+    """Keep weekly lookup visible inside the salt-data workflow."""
+    items = [
+        ("/records", "Dữ liệu báo cáo"),
+        ("/salt/weekly", "Tra cứu theo tuần"),
+    ]
+    if is_chi_cuc_user(session):
+        items.append(("/import-excel", "Import Excel tuần"))
+        items.append(("/standard-data", "Dữ liệu chuẩn QĐ 5277"))
+    links = ''.join(
+        f'<a class="salt-tab{" active" if href == current else ""}" href="{href}"'
+        + (' aria-current="page"' if href == current else '')
+        + f'>{label}</a>'
+        for href, label in items
+    )
+    return f'<nav class="salt-tabs" aria-label="Dữ liệu diêm nghiệp">{links}</nav>'
+
+
 def base_page(title, body, session=None, active_path=None):
     top = ""
     if session:
@@ -885,13 +969,18 @@ def base_page(title, body, session=None, active_path=None):
             "Chi tiết báo cáo": "/records",
             "Yêu cầu chỉnh sửa": "/records",
             "Import Excel": "/records/new",
+            "Import báo cáo tuần": "/import-excel",
+            "Xem trước import tuần": "/import-excel",
+            "Tra cứu báo cáo tuần": "/salt/weekly",
             "Dữ liệu chuẩn hóa": "/records",
         }.get(title, "/records")
         current = active_path or ("/standard-data" if title == "Dữ liệu chuẩn hóa" else current)
         salt_items = [("/records", "table", "Dữ liệu sản xuất muối"),
-                      ("/records/new", "plus", "Nhập số liệu")]
+                      ("/records/new", "plus", "Nhập số liệu"),
+                      ("/salt/weekly", "table", "Tra cứu báo cáo tuần")]
         system_items = []
         if is_chi_cuc_user(session):
+            salt_items.append(("/import-excel", "download", "Import báo cáo tuần"))
             salt_items.append(("/standard-data", "file", "Dữ liệu chuẩn hóa"))
         if can_manage_users(session):
             system_items.append(("/users", "users", "Tài khoản"))
@@ -934,7 +1023,7 @@ def base_page(title, body, session=None, active_path=None):
         <button type="button" id="sidebar-backdrop" class="sidebar-backdrop" aria-label="Đóng menu" tabindex="-1"></button>
         """
         body = f'<main class="app-main" id="main-content">{body}</main>'
-    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260910-roles"><script src="/assets/app.js?v=20260910-groups" defer></script></head><body>{top}{body}</body></html>"""
+    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260910-weekly-tabs"><script src="/assets/app.js?v=20260910-import-status" defer></script></head><body>{top}{body}</body></html>"""
 
 
 def login_page(message=""):
@@ -1000,37 +1089,178 @@ def get_units(con):
     return [r[0] for r in con.execute("SELECT DISTINCT unit_name FROM users WHERE role='unit' AND active=1 AND unit_name IS NOT NULL ORDER BY unit_name").fetchall()]
 
 
-def dashboard_page(session):
+def dashboard_page(session, query=""):
+    """Dashboard from the selected weekly sheet, compared with its predecessor."""
+    con = db_conn()
+    batches = con.execute(
+        """SELECT b.*,u.username FROM salt_import_batches b
+           JOIN users u ON u.id=b.imported_by
+           ORDER BY b.report_date DESC,b.id DESC"""
+    ).fetchall()
+    if not batches:
+        con.close()
+        return legacy_dashboard_page(session)
+
+    requested = parse_qs(query).get("batch", [""])[0].strip()
+    selected_index = next((i for i, batch in enumerate(batches) if str(batch["id"]) == requested), 0)
+    selected = batches[selected_index]
+    previous = batches[selected_index + 1] if selected_index + 1 < len(batches) else None
+    official = canonical_admin_unit(session["unit_name"]) if session["role"] == ROLE_UNIT else None
+
+    def batch_rows(batch):
+        if not batch:
+            return []
+        sql = "SELECT canonical_data_json FROM salt_weekly_import_rows WHERE batch_id=?"
+        args = [batch["id"]]
+        if session["role"] == ROLE_UNIT:
+            sql += " AND ma_don_vi_hanh_chinh=?"
+            args.append(official[1] if official else "")
+        return [json.loads(row["canonical_data_json"]) for row in con.execute(sql, args).fetchall()]
+
+    rows = batch_rows(selected)
+    previous_rows = batch_rows(previous)
+    con.close()
+
+    def sums(source):
+        return {
+            key: sum(float(row.get(key) or 0) for row in source)
+            for key in ("dien_tich", "san_luong", "sold_total", "remaining_total",
+                        "area_land", "area_tarp", "harvest_land", "harvest_tarp",
+                        "sold_land", "sold_tarp", "remaining_land", "remaining_tarp",
+                        "households", "workers")
+        }
+
+    current_totals, previous_totals = sums(rows), sums(previous_rows)
+    period_label = date.fromisoformat(str(selected["report_date"])).strftime("%d/%m/%Y")
+    previous_label = (date.fromisoformat(str(previous["report_date"])).strftime("%d/%m/%Y")
+                      if previous else "chưa có kỳ trước")
+
+    def metric_panel(label, total_key, land_key, tarp_key, unit, symbol, amber=False):
+        total = current_totals[total_key]
+        before = previous_totals[total_key]
+        difference = total - before
+        tone = " amber" if amber else ""
+        if previous:
+            marker = "+" if difference > 0 else ""
+            delta = f'<div class="metric-delta"><strong>{marker}{fmt_num(difference)}</strong> {esc(unit)} so với {esc(previous_label)}</div>'
+        else:
+            delta = '<div class="metric-delta muted">Chưa có sheet trước để so sánh</div>'
+        return f"""<article class="metric-panel{tone}">
+          <div class="metric-top"><h3>{label}</h3>{icon(symbol)}</div>
+          <div class="metric-middle"><div><div class="metric-number">{fmt_num(total)}</div><div class="metric-caption">{unit} · lũy tiến đến {esc(period_label)}</div>{delta}</div><div class="metric-symbol">{icon(symbol)}</div></div>
+          <div class="metric-breakdown"><div><span>Muối đất</span><strong>{fmt_num(current_totals[land_key])} <small>{unit}</small></strong></div><div><span>Muối trải bạt</span><strong>{fmt_num(current_totals[tarp_key])} <small>{unit}</small></strong></div></div>
+        </article>"""
+
+    metrics = ''.join([
+        metric_panel('DIỆN TÍCH SẢN XUẤT MUỐI', 'dien_tich', 'area_land', 'area_tarp', 'ha', 'area'),
+        metric_panel('SẢN LƯỢNG MUỐI THU HOẠCH', 'san_luong', 'harvest_land', 'harvest_tarp', 'tấn', 'harvest'),
+        metric_panel('SẢN LƯỢNG MUỐI TIÊU THỤ', 'sold_total', 'sold_land', 'sold_tarp', 'tấn', 'sold', True),
+        metric_panel('SẢN LƯỢNG MUỐI CÒN LẠI', 'remaining_total', 'remaining_land', 'remaining_tarp', 'tấn', 'stock', True),
+    ])
+    options = ''.join(
+        f'<option value="{batch["id"]}" {"selected" if batch["id"] == selected["id"] else ""}>'
+        f'{esc(batch["sheet_name"])} · {esc(batch["week_code"])}</option>'
+        for batch in batches
+    )
+    status_cards = ''.join([
+        f'<a class="status-card draft" href="/salt/weekly"><span class="status-icon">{icon("file")}</span><div><div class="status-card-count">{len(batches)}</div><div class="status-card-label">Sheet đã import</div></div></a>',
+        f'<a class="status-card approved" href="/salt/weekly?batch={selected["id"]}"><span class="status-icon">{icon("check")}</span><div><div class="status-card-count">{len(rows)}</div><div class="status-card-label">Đơn vị trong kỳ</div></div></a>',
+        f'<a class="status-card submitted" href="/salt/weekly?batch={selected["id"]}"><span class="status-icon">{icon("chart")}</span><div><div class="status-card-count">{selected["warning_rows"]}</div><div class="status-card-label">Dòng cảnh báo</div></div></a>',
+        f'<a class="status-card returned" href="/salt/weekly?batch={previous["id"] if previous else selected["id"]}"><span class="status-icon">{icon("return")}</span><div><div class="status-card-count">{previous["week_code"] if previous else "—"}</div><div class="status-card-label">Kỳ dùng để so sánh</div></div></a>',
+    ])
+    summary_rows = ''.join(
+        f'<tr><td>{esc(row["unit_name"])}</td><td>{fmt_num(row["dien_tich"])}</td><td>{fmt_num(row["san_luong"])}</td><td>{fmt_num(row["sold_total"])}</td><td>{fmt_num(row["remaining_total"])}</td><td>{fmt_num(row["households"])}</td><td>{fmt_num(row["workers"])}</td></tr>'
+        for row in sorted(rows, key=lambda item: item["unit_name"])
+    ) or '<tr><td colspan="7" class="empty">Đơn vị này chưa có dữ liệu trong sheet.</td></tr>'
+    scope = "Tất cả đơn vị" if is_chi_cuc_user(session) else session["unit_name"]
+    body = f"""
+    <div class="container">
+      {take_flash(session)}
+      <div class="page-head"><div><h1>Bảng giám sát</h1><div class="subtitle">Số liệu lũy tiến của một sheet tuần và mức thay đổi so với sheet liền trước.</div></div><a class="btn primary" href="/import-excel">{icon('download')}Import báo cáo tuần</a></div>
+      <div class="dashboard-toolbar"><form class="dashboard-period" method="get"><div class="field"><label>Kỳ đang xem</label><select name="batch">{options}</select></div><button class="btn primary">Xem dashboard</button></form><div class="scope-label">{icon('location')}<span>Đơn vị: <strong>{esc(scope)}</strong></span></div></div>
+      <div class="status-overview" aria-label="Tình trạng báo cáo tuần">{status_cards}</div>
+      <section class="dashboard-panel">
+        <div class="panel-heading"><h2 class="panel-title"><span class="panel-title-icon">{icon('chart')}</span>SỐ LIỆU SẢN XUẤT MUỐI</h2><div class="panel-meta">{esc(selected['sheet_name'])} · {esc(selected['week_code'])}<br>So sánh với: {esc(previous['sheet_name']) if previous else 'Chưa có sheet trước'}</div></div>
+        <div class="dashboard-metrics">{metrics}</div>
+        <div class="people-metrics"><div class="people-card"><div><div class="label">Số hộ làm muối</div><div class="value">{fmt_num(current_totals['households'])} <small>hộ</small></div></div>{icon('home')}</div><div class="people-card"><div><div class="label">Lao động làm muối</div><div class="value">{fmt_num(current_totals['workers'])} <small>người</small></div></div>{icon('users')}</div></div>
+        <p class="dashboard-note">Không cộng nhiều tuần: đây là số lũy tiến của sheet đang chọn. Chênh lệch bằng kỳ đang xem trừ kỳ liền trước theo ngày chốt.</p>
+      </section>
+      <section class="dashboard-panel"><div class="panel-heading"><h2 class="panel-title"><span class="panel-title-icon">{icon('table')}</span>CHI TIẾT THEO ĐƠN VỊ</h2><a class="btn small" href="/salt/weekly?batch={selected['id']}">Mở bảng Excel</a></div><div class="table-wrap"><table class="summary-table"><thead><tr><th>Đơn vị</th><th>Diện tích (ha)</th><th>Thu hoạch (tấn)</th><th>Tiêu thụ (tấn)</th><th>Còn lại (tấn)</th><th>Số hộ</th><th>Lao động</th></tr></thead><tbody>{summary_rows}</tbody></table></div></section>
+    </div>"""
+    return base_page("Tổng quan", body, session)
+
+
+def legacy_dashboard_page(session):
     con = db_conn()
     if is_chi_cuc_user(session):
-        rows = con.execute("SELECT * FROM records WHERE status='approved' ORDER BY report_date DESC").fetchall()
+        approved_rows = con.execute("SELECT * FROM records WHERE status='approved' ORDER BY report_date DESC, id DESC").fetchall()
         status_counts = {s: con.execute("SELECT COUNT(*) FROM records WHERE status=?", (s,)).fetchone()[0] for s in STATUS_LABELS}
+        standard_rows = con.execute(
+            """SELECT s.*, d.TenDonVi unit_name
+               FROM DN_SanLuongMuoi s
+               LEFT JOIN DM_DonViHanhChinh d
+                 ON d.Ma_DonViHanhChinh=s.Ma_DonViHanhChinh"""
+        ).fetchall()
     else:
-        rows = con.execute("SELECT * FROM records WHERE unit_name=? AND status='approved' ORDER BY report_date DESC", (session["unit_name"],)).fetchall()
+        approved_rows = con.execute("SELECT * FROM records WHERE unit_name=? AND status='approved' ORDER BY report_date DESC, id DESC", (session["unit_name"],)).fetchall()
         status_counts = {s: con.execute("SELECT COUNT(*) FROM records WHERE unit_name=? AND status=?", (session["unit_name"], s)).fetchone()[0] for s in STATUS_LABELS}
+        standard_rows = con.execute(
+            """SELECT s.*, d.TenDonVi unit_name
+               FROM DN_SanLuongMuoi s
+               JOIN DM_DonViHanhChinh d
+                 ON d.Ma_DonViHanhChinh=s.Ma_DonViHanhChinh
+               WHERE d.TenDonVi=?""",
+            (session["unit_name"],),
+        ).fetchall()
+
+    # Operational details are kept in app.records. Use only the latest
+    # cumulative report per unit/month so weekly cumulative reports are not
+    # added together. Official area/production below always come from QD 5277.
+    rows = []
+    seen_periods = set()
+    for row in approved_rows:
+        if using_postgres() and row["reporting_mode"] != "cumulative":
+            continue
+        key = (row["unit_name"], str(row["report_date"])[:7])
+        if key not in seen_periods:
+            seen_periods.add(key)
+            rows.append(row)
 
     totals = {"area_total":0,"harvest_total":0,"sold_total":0,"remaining_total":0,"households":0,"workers":0}
     for r in rows:
         t = record_totals(r)
-        totals["area_total"] += t["area_total"]
-        totals["harvest_total"] += t["harvest_total"]
         totals["sold_total"] += t["sold_total"]
         totals["remaining_total"] += t["remaining_total"]
         totals["households"] += r["households"] or 0
         totals["workers"] += r["workers"] or 0
+    totals["area_total"] = sum(float(r["DienTich"] or 0) for r in standard_rows)
+    totals["harvest_total"] = sum(float(r["SanLuong"] or 0) for r in standard_rows)
 
     if is_chi_cuc_user(session):
-        unit_summary = con.execute(
-            """SELECT unit_name,
-               SUM(area_land+area_tarp) area_total,
-               SUM(harvest_land+harvest_tarp) harvest_total,
-               SUM(sold_land+sold_tarp) sold_total,
-               SUM(remaining_land+remaining_tarp) remaining_total,
-               SUM(households) households,
-               SUM(workers) workers,
-               COUNT(*) reports
-               FROM records WHERE status='approved' GROUP BY unit_name ORDER BY unit_name"""
-        ).fetchall()
+        summaries = {}
+        for r in standard_rows:
+            name = r["unit_name"] or r["Ma_DonViHanhChinh"]
+            item = summaries.setdefault(name, {"unit_name":name, "area_total":0,
+                "harvest_total":0, "sold_total":0, "remaining_total":0,
+                "households":0, "workers":0, "periods":set()})
+            item["area_total"] += float(r["DienTich"] or 0)
+            item["harvest_total"] += float(r["SanLuong"] or 0)
+            item["periods"].add(str(r["Ma_ThoiGian"]))
+        for r in rows:
+            item = summaries.setdefault(r["unit_name"], {"unit_name":r["unit_name"],
+                "area_total":0, "harvest_total":0, "sold_total":0,
+                "remaining_total":0, "households":0, "workers":0, "periods":set()})
+            detail = record_totals(r)
+            item["sold_total"] += float(detail["sold_total"] or 0)
+            item["remaining_total"] += float(detail["remaining_total"] or 0)
+            item["households"] += float(r["households"] or 0)
+            item["workers"] += float(r["workers"] or 0)
+            item["periods"].add(str(r["report_date"])[:7])
+        unit_summary = []
+        for item in summaries.values():
+            item["reports"] = len(item.pop("periods"))
+            unit_summary.append(item)
+        unit_summary.sort(key=lambda item: item["unit_name"])
     else:
         unit_summary = []
     con.close()
@@ -1145,6 +1375,7 @@ def records_page(session, query):
     <div class="container">
       {take_flash(session)}
       <div class="page-head"><div><h1>Dữ liệu báo cáo</h1><div class="subtitle">Tra cứu, lọc và xuất dữ liệu theo kỳ báo cáo/đơn vị/trạng thái.</div></div><div class="actions"><a class="btn primary" href="/records/new">+ Nhập số liệu</a><a class="btn ok" href="/export.xlsx?{query_string}">Xuất Excel</a>{standard_button}</div></div>
+      {salt_data_tabs(session, "/records")}
       <div class="card"><form class="toolbar" method="get" action="/records">
         <div class="field"><label>Từ khóa</label><input name="q" value="{esc(filters['q'])}" placeholder="Đơn vị, ghi chú..."></div>
         {unit_field}
@@ -1205,7 +1436,7 @@ def standard_data_page(session):
         </tr>
         """)
 
-    table_body = ''.join(trs) if trs else '<tr><td colspan="8" class="empty">Chưa có dữ liệu chuẩn hóa.</td></tr>'
+    table_body = ''.join(trs) if trs else '<tr><td colspan="8" class="empty">Chưa có báo cáo tháng được duyệt để xuất bản theo QĐ 5277.</td></tr>'
 
     body = f"""
     <div class="container">
@@ -1214,7 +1445,7 @@ def standard_data_page(session):
         <div>
           <h1>Dữ liệu chuẩn hóa</h1>
           <div class="subtitle">
-            Dữ liệu Diêm nghiệp được chuẩn hóa theo bảng DN_SanLuongMuoi.
+            Dữ liệu báo cáo tháng đã duyệt, xuất bản theo cấu trúc DN_SanLuongMuoi của QĐ 5277.
           </div>
         </div>
         <div class="actions">
@@ -1222,9 +1453,11 @@ def standard_data_page(session):
         </div>
       </div>
 
+      {salt_data_tabs(session, "/standard-data")}
+
       <div class="notice info">
-        Tổng cộng <b>{len(rows)}</b> bản ghi chuẩn hóa. Mã đơn vị bắt đầu bằng
-        <b>TMP</b> hiện là mã tạm; sẽ thay bằng mã đơn vị hành chính chính thức ở bước sau.
+        Tổng cộng <b>{len(rows)}</b> bản ghi chuẩn hóa. Sheet tuần chỉ dùng cho theo dõi và so sánh;
+        chưa tự ghi vào đây để tránh hiểu số liệu lũy tiến tuần thành báo cáo tháng.
       </div>
 
       <div class="card">
@@ -1623,7 +1856,7 @@ def user_edit_page(session, user, error=""):
 
     return base_page("Sửa tài khoản", body, session)
 
-def import_excel_page(session):
+def legacy_import_excel_page(session):
     if not is_chi_cuc_user(session):
         return None
 
@@ -1741,7 +1974,7 @@ def import_excel_page(session):
         session
     )
 
-def import_excel_data(
+def legacy_import_excel_data(
     session,
     file_bytes,
     report_date,
@@ -2148,6 +2381,206 @@ def import_excel_data(
         f"Bỏ qua: {skipped}."
     )
 
+def import_excel_page(session):
+    if not is_chi_cuc_user(session):
+        return None
+    con = db_conn()
+    batches = con.execute(
+        """SELECT b.*,u.username FROM salt_import_batches b
+           JOIN users u ON u.id=b.imported_by ORDER BY b.id DESC LIMIT 8"""
+    ).fetchall()
+    con.close()
+    history = ''.join(
+        f"<tr><td>{esc(b['week_code'])}</td><td>{esc(b['filename'])}</td>"
+        f"<td>{esc(b['sheet_name'])}</td><td>{b['imported_rows']}</td>"
+        f"<td>{b['updated_rows']}</td><td>{b['skipped_rows']}</td><td>{esc(b['username'])}</td></tr>"
+        for b in batches
+    ) or '<tr><td colspan="7" class="empty">Chưa có đợt import tuần.</td></tr>'
+    body = f"""
+    <div class="container weekly-page">
+      {take_flash(session)}
+      <div class="page-head"><div><h1>Import báo cáo tuần</h1>
+        <div class="subtitle">Bước 1: chọn file. Hệ thống chỉ xem trước và kiểm tra, chưa ghi database.</div></div>
+        <a class="btn" href="/salt/weekly">Tra cứu tuần</a></div>
+      {salt_data_tabs(session, "/import-excel")}
+      <form class="card import-card js-loading-form" method="post" action="/import-excel" enctype="multipart/form-data">
+        {csrf_input(session)}
+        <div class="weekly-step"><span>1</span><div><strong>Chọn dữ liệu tuần</strong><small>File được kiểm tra trước khi import.</small></div></div>
+        <div class="grid">
+          <div class="field"><label>File Excel (.xlsx)</label><input type="file" name="excel_file" accept=".xlsx" required></div>
+          <div class="field"><label>Ngày chốt số liệu tuần</label><input type="date" name="report_date" required></div>
+          <div class="field"><label>Tên sheet</label><input name="sheet_name" placeholder="Ví dụ: 21.8-Tuan 34"></div>
+        </div>
+        <div class="notice info">Cột B phải là xã/phường chính thức. C/F là tổng diện tích và sản lượng; D/E, G/H là chi tiết nền đất và nền trải bạt.</div>
+        <button class="btn primary" type="submit" data-loading-text="Đang đọc và kiểm tra Excel...">Kiểm tra và xem trước</button>
+      </form>
+      <section class="card"><h2 class="section-title">Lịch sử import gần đây</h2>
+        <div class="table-wrap"><table class="summary-table"><thead><tr><th>Tuần</th><th>File</th><th>Sheet</th><th>Mới</th><th>Cập nhật</th><th>Bỏ qua</th><th>Người import</th></tr></thead><tbody>{history}</tbody></table></div>
+      </section>
+    </div>"""
+    return base_page("Import báo cáo tuần", body, session, active_path="/import-excel")
+
+
+def import_preview_page(session):
+    if not is_chi_cuc_user(session):
+        return None
+    preview = session.get("weekly_import_preview")
+    if not preview:
+        set_flash(session, "err", "Chưa có dữ liệu xem trước. Hãy chọn file Excel.")
+        return None
+    rows_html = []
+    for row in preview["rows"]:
+        data = row["canonical"]
+        messages = row["errors"] + row["warnings"]
+        label = {"valid":"Hợp lệ", "warning":"Cảnh báo", "error":"Lỗi"}[row["status"]]
+        rows_html.append(
+            f'<tr class="preview-{row["status"]}"><td>{row["excel_row"]}</td>'
+            f'<td><strong>{esc(data["unit_name"])}</strong><small>{esc(data.get("ma_don_vi_hanh_chinh") or "Chưa có mã")}</small></td>'
+            f'<td>{fmt_num(data["dien_tich"],2)}</td><td>{fmt_num(data["san_luong"],2)}</td>'
+            f'<td><span class="validation-badge {row["status"]}">{label}</span>'
+            f'<div class="validation-message">{esc("; ".join(messages))}</div></td></tr>'
+        )
+    blocked = preview["error_rows"] > 0
+    confirm = f"""
+      <form class="confirm-import" method="post" action="/import-excel/confirm">
+        {csrf_input(session)}
+        <div class="field"><label>Nếu xã/tuần đã tồn tại</label><select name="mode"><option value="skip">Giữ dữ liệu hiện tại</option><option value="update">Cập nhật bằng file này</option></select></div>
+        <button class="btn primary" type="submit" {'disabled' if blocked else ''}>Xác nhận import</button>
+      </form>""" if not blocked else '<div class="notice err">Cần sửa các dòng lỗi trong Excel rồi tải lại file.</div>'
+    body = f"""
+    <div class="container weekly-page">
+      {take_flash(session)}
+      <div class="page-head"><div><h1>Xem trước báo cáo tuần</h1>
+        <div class="subtitle">Bước 2: kiểm tra {esc(preview['filename'])} · {esc(preview['sheet_name'])} · {esc(preview['week_code'])}</div></div>
+        <a class="btn" href="/import-excel">Chọn file khác</a></div>
+      {salt_data_tabs(session, "/import-excel")}
+      <div class="validation-summary">
+        <div><strong>{len(preview['rows'])}</strong><span>Tổng số xã</span></div>
+        <div class="valid"><strong>{preview['valid_rows']}</strong><span>Hợp lệ</span></div>
+        <div class="warning"><strong>{preview['warning_rows']}</strong><span>Cảnh báo</span></div>
+        <div class="error"><strong>{preview['error_rows']}</strong><span>Lỗi</span></div>
+      </div>
+      <section class="card"><div class="table-wrap"><table class="summary-table preview-table"><thead><tr><th>Dòng Excel</th><th>Đơn vị</th><th>Diện tích (ha)</th><th>Sản lượng (tấn)</th><th>Kết quả</th></tr></thead><tbody>{''.join(rows_html)}</tbody></table></div></section>
+      {confirm}
+    </div>"""
+    return base_page("Xem trước import tuần", body, session, active_path="/import-excel")
+
+
+def _weekly_excel_value(value):
+    if value in (None, ""):
+        return ""
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return fmt_num(value, 2)
+    token = str(value)
+    try:
+        parsed = datetime.fromisoformat(token)
+        return parsed.strftime("%d/%m/%Y")
+    except ValueError:
+        return token
+
+
+def _weekly_total(raw_rows, column):
+    values = []
+    for raw in raw_rows:
+        value = raw.get(str(column), {}).get("value")
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            values.append(float(value))
+    if column in (20, 21):
+        non_zero = [value for value in values if value]
+        return sum(non_zero) / len(non_zero) if non_zero else None
+    return sum(values)
+
+
+def weekly_records_page(session, query):
+    """Browse one imported workbook sheet as one report."""
+    params = parse_qs(query)
+    con = db_conn()
+    batches = con.execute(
+        """SELECT b.*,u.username FROM salt_import_batches b
+           JOIN users u ON u.id=b.imported_by
+           ORDER BY b.report_date DESC,b.id DESC"""
+    ).fetchall()
+    requested_batch = params.get("batch", [""])[0].strip()
+    selected = next((batch for batch in batches if str(batch["id"]) == requested_batch), None)
+    if not selected:
+        requested_week = params.get("week", [""])[0].strip()
+        selected = next((batch for batch in batches if batch["week_code"] == requested_week), None)
+    if not selected and batches:
+        selected = batches[0]
+
+    rows = []
+    if selected:
+        sql = """SELECT excel_row,unit_name_raw,ma_don_vi_hanh_chinh,
+                        validation_status,validation_messages_json,raw_data_json
+                 FROM salt_weekly_import_rows WHERE batch_id=?"""
+        args = [selected["id"]]
+        if session["role"] == ROLE_UNIT:
+            official = canonical_admin_unit(session["unit_name"])
+            sql += " AND ma_don_vi_hanh_chinh=?"
+            args.append(official[1] if official else "")
+        sql += " ORDER BY excel_row"
+        rows = con.execute(sql, args).fetchall()
+    con.close()
+
+    options = ''.join(
+        f'<option value="{batch["id"]}" {"selected" if selected and batch["id"] == selected["id"] else ""}>'
+        f'{esc(batch["sheet_name"])} · {esc(batch["week_code"])} · {esc(batch["filename"])}</option>'
+        for batch in batches
+    )
+    if not selected:
+        report = '<section class="card empty">Chưa có sheet báo cáo tuần nào được import.</section>'
+    else:
+        raw_rows = [json.loads(row["raw_data_json"]) for row in rows]
+        detail_rows = []
+        for raw in raw_rows:
+            cells = ''.join(f'<td>{esc(_weekly_excel_value(raw.get(str(column), {}).get("value")))}</td>' for column in range(1, 29))
+            detail_rows.append(f'<tr>{cells}</tr>')
+        total_cells = ['<th></th>', '<th>TỔNG CỘNG</th>']
+        for column in range(3, 29):
+            if column == 22:
+                area, production = _weekly_total(raw_rows, 3), _weekly_total(raw_rows, 6)
+                value = production / area if area else None
+            elif column in tuple(range(3, 22)) + tuple(range(23, 27)):
+                value = _weekly_total(raw_rows, column)
+            else:
+                value = None
+            total_cells.append(f'<th>{esc(_weekly_excel_value(value))}</th>')
+        report_date = selected["report_date"]
+        try:
+            report_date = date.fromisoformat(str(report_date)).strftime("%d/%m/%Y")
+        except ValueError:
+            report_date = str(report_date)
+        report = f"""
+        <section class="sheet-report">
+          <div class="sheet-meta">
+            <div><span>Sheet báo cáo</span><strong>{esc(selected['sheet_name'])}</strong></div>
+            <div><span>Ngày chốt</span><strong>{esc(report_date)}</strong></div>
+            <div><span>Tuần</span><strong>{esc(selected['week_code'])}</strong></div>
+            <div><span>Số dòng đơn vị</span><strong>{len(rows)}</strong></div>
+          </div>
+          <div class="excel-sheet-wrap"><table class="excel-sheet">
+            <caption>Báo cáo tình hình sản xuất, chế biến, tiêu thụ niên vụ muối — lũy tiến đến ngày {esc(report_date)}</caption>
+            <thead>
+              <tr><th rowspan="2">TT</th><th rowspan="2">Thành phố/huyện/thị xã</th><th colspan="3">Diện tích sản xuất muối (ha)</th><th colspan="3">Sản lượng muối thu hoạch (tấn)</th><th colspan="3">Sản lượng muối tiêu thụ (tấn)</th><th colspan="3">Sản lượng còn lại (tấn)</th><th colspan="3">Sản lượng muối chế biến (tấn)</th><th rowspan="2">Số hộ làm muối</th><th rowspan="2">Số lao động</th><th colspan="2">Giá bán (đồng/kg)</th><th rowspan="2">Năng suất BQ</th><th colspan="3">Thiệt hại do mưa trái mùa</th><th rowspan="2">Diện tích mất trắng</th><th rowspan="2">Ghi chú</th><th rowspan="2">Thời gian kết thúc niên vụ</th></tr>
+              <tr><th>Cộng</th><th>Muối đất</th><th>Muối trải bạt</th><th>Cộng</th><th>Muối đất</th><th>Muối trải bạt</th><th>Cộng</th><th>Muối đất</th><th>Muối trải bạt</th><th>Cộng</th><th>Muối đất</th><th>Muối trải bạt</th><th>Cộng</th><th>Muối tinh</th><th>Muối I-ốt</th><th>Muối đất</th><th>Muối trải bạt</th><th>Cộng</th><th>Muối đất</th><th>Muối trải bạt</th></tr>
+            </thead>
+            <tbody><tr class="sheet-total">{''.join(total_cells)}</tr>{''.join(detail_rows)}</tbody>
+          </table></div>
+          <p class="sheet-footnote">Nguồn: {esc(selected['filename'])} · Import bởi {esc(selected['username'])} lúc {esc(selected['imported_at'])}. Mỗi sheet là một báo cáo; mỗi xã/phường là một dòng trong báo cáo.</p>
+        </section>"""
+
+    body = f"""
+    <div class="container weekly-page">
+      {take_flash(session)}
+      <div class="page-head"><div><h1>Tra cứu sheet báo cáo tuần</h1><div class="subtitle">Chọn một sheet đã import để đọc lại toàn bộ bảng theo bố cục Excel.</div></div>
+        {'<a class="btn primary" href="/import-excel">Import Excel</a>' if is_chi_cuc_user(session) else ''}</div>
+      {salt_data_tabs(session, "/salt/weekly")}
+      <form class="card weekly-filter" method="get"><div class="field sheet-picker"><label>Sheet đã import</label><select name="batch">{options}</select></div><button class="btn primary">Mở bảng</button><div class="weekly-progress"><strong>{len(batches)}</strong><span>sheet báo cáo</span></div></form>
+      {report}
+    </div>"""
+    return base_page("Tra cứu báo cáo tuần", body, session, active_path="/salt/weekly")
+
+
 def change_password_page(session, error=""):
     notice = f'<div class="notice err">{esc(error)}</div>' if error else ''
     body = f"""<div class="container"><div class="page-head"><div><h1>Đổi mật khẩu</h1></div></div>{notice}<form class="card" method="post" action="/change-password">{csrf_input(session)}<div class="grid"><div class="field"><label>Mật khẩu hiện tại</label><input type="password" name="old" required></div><div class="field"><label>Mật khẩu mới</label><input type="password" name="new" minlength="8" required></div><div class="field"><label>Nhập lại mật khẩu mới</label><input type="password" name="new2" minlength="8" required></div></div><button class="btn primary" style="margin-top:12px">Đổi mật khẩu</button></form></div>"""
@@ -2509,7 +2942,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/dashboard":
 
             self.send_html(
-                dashboard_page(session)
+                dashboard_page(session, parsed.query)
             )
 
             return
@@ -2539,6 +2972,10 @@ class Handler(BaseHTTPRequestHandler):
                 ),
                 200 if p else 403
             )
+            return
+
+        if path == "/salt/weekly":
+            self.send_html(weekly_records_page(session, parsed.query))
             return
 
 
@@ -2574,6 +3011,13 @@ class Handler(BaseHTTPRequestHandler):
                 200 if p else 403
             )
 
+            return
+        if path == "/import-excel/preview":
+            p = import_preview_page(session)
+            if p:
+                self.send_html(p)
+            else:
+                self.redirect("/import-excel")
             return
         # =========================
         # TÀI KHOẢN ĐƠN VỊ
@@ -3042,30 +3486,45 @@ class Handler(BaseHTTPRequestHandler):
             ).strip()
 
 
-            mode = data.get(
-                "mode",
-                "skip"
-            )
-
-
-            ok, message = import_excel_data(
-                session,
-                uploaded["content"],
-                report_date,
-                sheet_name,
-                mode,
-                filename
-            )
-
-
-            set_flash(
-                session,
-                "ok" if ok else "err",
-                message
-            )
-
-
-            self.redirect("/import-excel")
+            try:
+                session["weekly_import_preview"] = parse_weekly_workbook(
+                    uploaded["content"], report_date, sheet_name, filename,
+                    canonical_admin_unit,
+                )
+            except WeeklyImportError as exc:
+                set_flash(session, "err", str(exc))
+                self.redirect("/import-excel")
+                return
+            self.redirect("/import-excel/preview")
+            return
+        if path == "/import-excel/confirm":
+            if not is_chi_cuc_user(session):
+                self.send_html(base_page("403", "<div class='container'><div class='notice err'>Không có quyền import.</div></div>", session), 403)
+                return
+            preview = session.get("weekly_import_preview")
+            if not preview:
+                set_flash(session, "err", "Dữ liệu xem trước đã hết hạn. Hãy chọn lại file.")
+                self.redirect("/import-excel")
+                return
+            con = db_conn()
+            try:
+                result = commit_weekly_preview(con, session, preview, data.get("mode", "skip"), now_text())
+                con.commit()
+            except WeeklyImportError as exc:
+                con.rollback()
+                set_flash(session, "err", str(exc))
+                self.redirect("/import-excel/preview")
+                return
+            except INTEGRITY_ERRORS:
+                con.rollback()
+                set_flash(session, "err", "Dữ liệu trùng hoặc không còn hợp lệ. Hãy tải lại file để kiểm tra.")
+                self.redirect("/import-excel/preview")
+                return
+            finally:
+                con.close()
+            session.pop("weekly_import_preview", None)
+            set_flash(session, "ok", f"Đã import tuần {preview['week_code']}: {result['inserted']} mới, {result['updated']} cập nhật, {result['skipped']} bỏ qua.")
+            self.redirect(f"/salt/weekly?week={quote(preview['week_code'])}")
             return
         if path=="/records/new":
             ok,res=save_record(session,data)

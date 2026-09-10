@@ -211,10 +211,10 @@ def write_outputs(project_root: Path, issues: list[Issue], totals: dict[str, Dec
 
 - B -> `Ma_DonViHanhChinh` qua mã hành chính chính thức; alias `An Thời Đông` được sửa thành `An Thới Đông`.
 - Kỳ báo cáo -> `Ma_ThoiGian = '2026-08'`.
-- Phương pháp -> `Truyền thống` (D/G/T), `Trải bạt` (E/H/U).
-- D/E -> `DienTich` theo từng phương pháp.
-- G/H -> `SanLuong` theo từng phương pháp.
-- `GiaBanBinhQuan`: giá đơn xác định từ T/U; khoảng giá hoặc giá không rõ giữ NULL.
+- Phương pháp -> một record `Truyền thống`; nền đất và nền trải bạt không phải hai phương pháp riêng.
+- C -> `DienTich`; D/E được giữ để đối chiếu hai loại nền.
+- F -> `SanLuong`; G/H được giữ để đối chiếu hai loại nền.
+- `GiaBanBinhQuan` -> NULL; giá riêng theo nền tại T/U chỉ được giữ trong staging.
 
 ## Cột Excel chỉ nằm trong staging
 
@@ -226,7 +226,7 @@ def write_outputs(project_root: Path, issues: list[Issue], totals: dict[str, Dec
 - `Ma_DonViHanhChinh`: source chỉ có tên địa bàn, được ánh xạ sang mã chính thức theo Quyết định 19/2025/QĐ-TTg.
 - `Ma_ThoiGian`: suy ra từ snapshot tháng 08/2026; ngày 21/08/2026 chỉ giữ ở staging.
 - `PhuongPhapSX`: áp dụng business rule đã xác nhận, không lấy trực tiếp từ một cột Excel.
-- `GiaBanBinhQuan`: giá được giữ riêng theo phương pháp; không lấy trung bình khoảng giá.
+- `GiaBanBinhQuan`: không suy diễn giá bình quân từ hai giá riêng theo nền.
 
 ## Quy ước validation
 
