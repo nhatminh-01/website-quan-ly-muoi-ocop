@@ -26,5 +26,10 @@ if errorlevel 1 (
     pause
     exit /b 1
 )
+"%OCOP_PYTHON%" migrate_weekly.py --db "salt_management_TEST.db"
+if errorlevel 1 (
+    pause
+    exit /b 1
+)
 "%OCOP_PYTHON%" server.py --db "salt_management_TEST.db" --skip-legacy-sync --host 127.0.0.1 --port 8081
 pause

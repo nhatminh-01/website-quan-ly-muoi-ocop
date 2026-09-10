@@ -212,8 +212,8 @@ def write_outputs(project_root: Path, issues: list[Issue], totals: dict[str, Dec
 - B -> `Ma_DonViHanhChinh` qua mã hành chính chính thức; alias `An Thời Đông` được sửa thành `An Thới Đông`.
 - Kỳ báo cáo -> `Ma_ThoiGian = '2026-08'`.
 - Phương pháp -> một record `Truyền thống`; nền đất và nền trải bạt không phải hai phương pháp riêng.
-- C -> `DienTich`; D/E được giữ để đối chiếu hai loại nền.
-- F -> `SanLuong`; G/H được giữ để đối chiếu hai loại nền.
+- D+E -> `DienTich`; D/E vẫn giữ riêng, C chỉ dùng đối chiếu.
+- G+H -> `SanLuong`; G/H vẫn giữ riêng, F chỉ dùng đối chiếu.
 - `GiaBanBinhQuan` -> NULL; giá riêng theo nền tại T/U chỉ được giữ trong staging.
 
 ## Cột Excel chỉ nằm trong staging

@@ -187,7 +187,7 @@ def commit_weekly_preview(con, session, preview, mode, now):
         "batch_id", "week_code", "report_date", "unit_name", "ma_don_vi_hanh_chinh",
         "phuong_phap_sx", "dien_tich", "san_luong", "gia_ban_binh_quan",
         "area_land", "area_tarp", "harvest_land", "harvest_tarp", "sold_land",
-        "sold_tarp", "remaining_land", "remaining_tarp", "processed_fine",
+        "sold_tarp", "sold_total", "remaining_land", "remaining_tarp", "remaining_total", "processed_fine",
         "processed_iodized", "households", "workers", "price_land", "price_tarp",
         "damage_land", "damage_tarp", "note", "created_by", "created_at", "updated_at",
     )
@@ -227,3 +227,47 @@ def commit_weekly_preview(con, session, preview, mode, now):
         (inserted, updated, skipped, batch_id),
     )
     return {"batch_id": batch_id, "inserted": inserted, "updated": updated, "skipped": skipped}
+
+
+def effective_weekly_dashboard(con, *, week="", batch="", unit_code=None):
+    """Read effective records; a historical batch URL only selects its week.
+
+    Scope the period list too, so a unit compares with its own nearest earlier
+    effective week. Multiple uploads never create extra comparison periods.
+    """
+    scope = " WHERE ma_don_vi_hanh_chinh=?" if unit_code is not None else ""
+    args = (unit_code,) if unit_code is not None else ()
+    periods = [dict(row) for row in con.execute(
+        "SELECT week_code,MAX(report_date) AS report_date FROM salt_weekly_records"
+        + scope + " GROUP BY week_code ORDER BY week_code DESC", args).fetchall()]
+    if not periods:
+        return None
+    if not week and batch:
+        # Compare as text: malformed historical URLs must not raise a PG cast error.
+        old_batch = con.execute("SELECT week_code FROM salt_import_batches WHERE CAST(id AS TEXT)=?",
+                                (batch,)).fetchone()
+        week = old_batch["week_code"] if old_batch else ""
+    index = next((i for i, period in enumerate(periods) if period["week_code"] == week), 0)
+    selected = periods[index]
+    previous = periods[index + 1] if index + 1 < len(periods) else None
+
+    def effective_rows(period):
+        if period is None:
+            return []
+        sql = "SELECT * FROM salt_weekly_records WHERE week_code=?"
+        args = [period["week_code"]]
+        if unit_code is not None:
+            sql += " AND ma_don_vi_hanh_chinh=?"
+            args.append(unit_code)
+        return [dict(row) for row in con.execute(sql + " ORDER BY unit_name", args).fetchall()]
+
+    rows = effective_rows(selected)
+    warnings = con.execute("""SELECT COUNT(*) FROM salt_weekly_records r
+        WHERE r.week_code=? AND EXISTS (
+          SELECT 1 FROM salt_weekly_import_rows s WHERE s.batch_id=r.batch_id
+          AND s.ma_don_vi_hanh_chinh=r.ma_don_vi_hanh_chinh
+          AND s.validation_status='warning')"""
+        + (" AND r.ma_don_vi_hanh_chinh=?" if unit_code is not None else ""),
+        (selected["week_code"], *args)).fetchone()[0]
+    return {"periods": periods, "selected": selected, "previous": previous,
+            "rows": rows, "previous_rows": effective_rows(previous), "warning_rows": warnings}

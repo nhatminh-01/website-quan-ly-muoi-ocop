@@ -12,8 +12,10 @@ với sản phẩm/hồ sơ và giao diện tra cứu `/ocop/criteria`. Chi ti�
 Báo cáo giai đoạn trước vẫn lưu tại [OCOP1_REPORT.md](OCOP1_REPORT.md).
 
 **Mở `START_OCOP_TEST_WINDOWS.bat`**, sau đó truy cập **http://127.0.0.1:8081/ocop**.
-Tệp chạy này dùng riêng `salt_management_TEST.db`, tự kiểm tra migration đã chạy
-và không chạy lại chuẩn hóa muối khi khởi động. Tài khoản là các tài khoản trong bản test.
+Tệp chạy này dùng riêng `salt_management_TEST.db`, tự chạy lần lượt
+`migrate_roles.py`, `migrate_ocop.py`, `migrate_weekly.py`, rồi mở server.
+Các migration chạy lại an toàn; không chạy lại chuẩn hóa muối khi khởi động TEST.
+Tài khoản là các tài khoản trong bản test.
 Nếu máy chưa có Python trên PATH, tệp chạy sẽ thử Python có sẵn trong bộ công cụ Codex.
 
 Nếu chưa có database test, tạo bản sao một lần bằng `python prepare_ocop_test.py`.
@@ -28,6 +30,24 @@ Hồ sơ hợp lệ chỉ có nghĩa hoàn thành bước kiểm tra hồ sơ, c
 
 Chạy kiểm thử tự động bằng `python -B -m unittest discover -s tests -v`.
 Các bài kiểm thử tạo database tạm riêng, không sửa dữ liệu trong hai database của người dùng.
+
+## Nền tảng báo cáo tuần
+
+Dashboard dùng `salt_weekly_records` làm dữ liệu có hiệu lực. Chọn **Giữ dữ liệu hiện tại**
+giữ nguyên từng đơn vị/tuần đã có; **Cập nhật** thay số liệu đơn vị/tuần đó.
+Mỗi lần upload vẫn được lưu trong lịch sử và raw. Một tuần chỉ xuất hiện một lần trong bộ chọn
+dashboard; kỳ so sánh là tuần có dữ liệu gần nhất trước đó trong phạm vi đơn vị được xem.
+
+Muối đất và muối trải bạt giữ riêng các chỉ tiêu chi tiết. Khi chuẩn hóa,
+`PhuongPhapSX = 'Truyền thống'`, diện tích = `area_land + area_tarp`,
+sản lượng = `harvest_land + harvest_tarp`. Không cộng thêm dòng chuẩn cũ và không
+thay chi tiết bằng cột tổng Excel. Repair chỉ gộp dòng `Trải bạt` cũ khi tái tạo
+kỳ từ báo cáo nguồn; không sửa các chỉ tiêu chi tiết của báo cáo đó.
+
+Migration weekly chỉ thêm schema/tổng tiêu thụ/tồn kho còn thiếu và cập nhật view;
+không chạy repair bảng `DN_SanLuongMuoi`. View weekly cũng dùng tổng hai nhóm chi tiết,
+chưa xuất bản dữ liệu tuần vào bảng chuẩn chính thức. PostgreSQL cần áp dụng
+`database/sql/011_weekly_foundation.sql` sau migration 010.
 
 ## Phạm vi đã xây dựng
 

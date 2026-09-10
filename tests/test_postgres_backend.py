@@ -21,6 +21,7 @@ import ocop_services as svc
 from weekly_import import WeeklyImportError, parse_weekly_workbook, commit_weekly_preview
 from database.migration import migrate_sqlite_to_postgres as migration
 from test_integration import legacy_schema, Client
+from test_weekly_foundation import preview, exercise_effective_weeks
 
 
 class PostgreSQLTranslationTests(unittest.TestCase):
@@ -44,7 +45,7 @@ class PostgreSQLBackendTests(unittest.TestCase):
             for name in ('002_qd5277_schema.sql','004_app_schema.sql','005_monthly_salt_sync.sql',
                          '006_official_admin_units.sql','007_ocop_init_only.sql',
                          '008_ocop_dynamic_criteria.sql','009_staff_role.sql',
-                         '010_weekly_salt_imports.sql'):
+                         '010_weekly_salt_imports.sql','011_weekly_foundation.sql'):
                 con.execute((Path(server.__file__).parent/'database/sql'/name).read_text(encoding='utf-8'))
         self.temp=tempfile.TemporaryDirectory(prefix='ocop-pg-source-')
         self.addCleanup(self.temp.cleanup)
@@ -103,8 +104,14 @@ class PostgreSQLBackendTests(unittest.TestCase):
             self.assertEqual((by['Truyền thống']['DienTich'],by['Truyền thống']['SanLuong']),(5,30))
             self.assertIsNone(by['Truyền thống']['GiaBanBinhQuan'])
             con.execute("INSERT INTO app.records(report_date,unit_name,created_by,area_land,status,created_at,updated_at,ma_don_vi_hanh_chinh) VALUES('2026-08-01','Xã An Thới Đông',2,999,'approved','d','d','27673')")
+            source = con.execute('SELECT * FROM app.records ORDER BY id').fetchall()
+            con.execute("UPDATE DN_SanLuongMuoi SET DienTich=2,SanLuong=10")
+            con.execute("INSERT INTO DN_SanLuongMuoi(Ma_DonViHanhChinh,Ma_ThoiGian,PhuongPhapSX,DienTich,SanLuong) VALUES('27673','2026-08','Trải bạt',3,20)")
+            migration.repair_salt(con)
             migration.repair_salt(con)
             self.assertEqual(con.execute('SELECT SUM(DienTich) FROM DN_SanLuongMuoi').fetchone()[0],5)
+            self.assertEqual(con.execute('SELECT COUNT(*) FROM DN_SanLuongMuoi').fetchone()[0],1)
+            self.assertEqual(con.execute('SELECT * FROM app.records ORDER BY id').fetchall(),source)
 
     def test_dry_run_and_identity_collision_roll_back_every_table(self):
         self.migrate(dry_run=True)
@@ -136,7 +143,8 @@ class PostgreSQLBackendTests(unittest.TestCase):
         wb=Workbook();ws=wb.active;ws.title=etl.SHEET_NAME
         for row,name in zip(etl.DATA_ROWS,server.UNITS):
             ws.cell(row,2,name)
-            for col,value in ((3,5),(4,2),(5,3),(6,30),(7,10),(8,20),(20,1200),(21,'2.000 - 2.500')):
+            # C/F deliberately disagree: standard values must be D+E / G+H.
+            for col,value in ((3,999),(4,2),(5,3),(6,9999),(7,10),(8,20),(20,1200),(21,'2.000 - 2.500')):
                 ws.cell(row,col,value)
         wb.save(workbook);wb.close()
         options=conninfo_to_dict(self.dsn);options['dbname']=self.name
@@ -150,6 +158,37 @@ class PostgreSQLBackendTests(unittest.TestCase):
             self.assertEqual(con.execute('SELECT COUNT(*) FROM staging.diem_nghiep_2026_w34_raw').fetchone()[0],9)
             self.assertEqual(con.execute('SELECT COUNT(*) FROM DN_SanLuongMuoi').fetchone()[0],8)
             self.assertEqual(con.execute("SELECT SUM(DienTich) FROM DN_SanLuongMuoi WHERE PhuongPhapSX='Truyền thống'").fetchone()[0],40)
+            self.assertEqual(con.execute('SELECT SUM(SanLuong) FROM DN_SanLuongMuoi').fetchone()[0],240)
+            raw=con.execute("SELECT c_cached,d_cached,e_cached FROM staging.diem_nghiep_2026_w34_raw WHERE source_sheet=%s ORDER BY excel_row",(etl.SHEET_NAME,)).fetchall()
+            self.assertTrue(all(tuple(row.values())==('999','2','3') for row in raw))
+
+    def test_weekly_effective_skip_update_distinct_comparison_and_unit_scope(self):
+        self.migrate()
+        with self.connection() as raw:
+            exercise_effective_weeks(self, backend_db.CompatConnection(raw))
+
+    def test_weekly_010_upgrade_backfills_winner_and_repeated_011_preserves_data(self):
+        self.migrate()
+        with self.connection(autocommit=True) as raw:
+            con=backend_db.CompatConnection(raw)
+            a=preview('2026-08-21','winning')
+            a['rows'][0]['canonical'].update(sold_total=501,remaining_total=499,dien_tich=999,san_luong=9999)
+            commit_weekly_preview(con,{'user_id':1},a,'skip','date')
+            commit_weekly_preview(con,{'user_id':1},preview('2026-08-22','skipped',9),'skip','date')
+            con.commit()
+            raw.execute('ALTER TABLE app.salt_weekly_records DROP COLUMN sold_total, DROP COLUMN remaining_total')
+            raw.execute((Path(server.__file__).parent/'database/sql/010_weekly_salt_imports.sql').read_text(encoding='utf-8'))
+            before=raw.execute('SELECT * FROM app.salt_weekly_records').fetchall()
+            source={table:raw.execute('SELECT * FROM '+table+' ORDER BY id').fetchall() for table in
+                    ('app.records','app.ocop_applications','staging.salt_weekly_import_rows','app.salt_import_batches')}
+            upgrade=(Path(server.__file__).parent/'database/sql/011_weekly_foundation.sql').read_text(encoding='utf-8')
+            raw.execute(upgrade)
+            raw.execute(upgrade)
+            after=raw.execute('SELECT * FROM app.salt_weekly_records').fetchall()
+            self.assertEqual(dict(after[0]),{**before[0],'sold_total':501,'remaining_total':499})
+            self.assertEqual(source,{table:raw.execute('SELECT * FROM '+table+' ORDER BY id').fetchall() for table in source})
+            row=raw.execute('SELECT * FROM app.v_dn_sanluongmuoi_weekly_qd5277').fetchone()
+            self.assertEqual((row['PhuongPhapSX'],row['DienTich'],row['SanLuong']),('Truyền thống',100,1000))
 
     def test_weekly_preview_commit_is_qd_shaped_and_rejects_duplicate_file(self):
         from openpyxl import Workbook

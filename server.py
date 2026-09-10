@@ -29,7 +29,8 @@ from backend_db import compat_connect, load_settings, INTEGRITY_ERRORS
 from permissions import (ROLE_ADMIN, ROLE_STAFF, ROLE_UNIT, ROLE_LABELS,
                          is_admin, is_chi_cuc_user, can_manage_users, can_review_records)
 from salt_normalization import sync_methods
-from weekly_import import WeeklyImportError, parse_weekly_workbook, commit_weekly_preview
+from weekly_import import WeeklyImportError, parse_weekly_workbook, commit_weekly_preview, effective_weekly_dashboard
+from migrate_weekly import migrate as migrate_weekly
 import repositories
 from datetime import datetime, date
 from http import cookies
@@ -313,70 +314,6 @@ def init_db():
             FOREIGN KEY(user_id) REFERENCES users(id)
         );
 
-        CREATE TABLE IF NOT EXISTS salt_import_batches(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            filename TEXT NOT NULL,
-            file_sha256 TEXT NOT NULL,
-            sheet_name TEXT NOT NULL,
-            week_code TEXT NOT NULL,
-            report_date TEXT NOT NULL,
-            template_version TEXT NOT NULL DEFAULT 'weekly-v1',
-            import_mode TEXT NOT NULL CHECK(import_mode IN ('skip','update')),
-            total_rows INTEGER NOT NULL,
-            warning_rows INTEGER NOT NULL DEFAULT 0,
-            imported_rows INTEGER NOT NULL DEFAULT 0,
-            updated_rows INTEGER NOT NULL DEFAULT 0,
-            skipped_rows INTEGER NOT NULL DEFAULT 0,
-            imported_by INTEGER NOT NULL REFERENCES users(id),
-            imported_at TEXT NOT NULL,
-            UNIQUE(file_sha256,sheet_name,week_code)
-        );
-        CREATE TABLE IF NOT EXISTS salt_weekly_import_rows(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            batch_id INTEGER NOT NULL REFERENCES salt_import_batches(id) ON DELETE CASCADE,
-            excel_row INTEGER NOT NULL,
-            unit_name_raw TEXT NOT NULL,
-            ma_don_vi_hanh_chinh TEXT,
-            validation_status TEXT NOT NULL CHECK(validation_status IN ('valid','warning')),
-            validation_messages_json TEXT NOT NULL DEFAULT '[]',
-            raw_data_json TEXT NOT NULL,
-            canonical_data_json TEXT NOT NULL,
-            UNIQUE(batch_id,excel_row)
-        );
-        CREATE TABLE IF NOT EXISTS salt_weekly_records(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            batch_id INTEGER NOT NULL REFERENCES salt_import_batches(id),
-            week_code TEXT NOT NULL,
-            report_date TEXT NOT NULL,
-            unit_name TEXT NOT NULL,
-            ma_don_vi_hanh_chinh TEXT NOT NULL REFERENCES DM_DonViHanhChinh(Ma_DonViHanhChinh),
-            phuong_phap_sx TEXT NOT NULL DEFAULT 'Truyền thống',
-            dien_tich REAL NOT NULL CHECK(dien_tich>=0),
-            san_luong REAL NOT NULL CHECK(san_luong>=0),
-            gia_ban_binh_quan REAL CHECK(gia_ban_binh_quan IS NULL OR gia_ban_binh_quan>=0),
-            area_land REAL NOT NULL DEFAULT 0, area_tarp REAL NOT NULL DEFAULT 0,
-            harvest_land REAL NOT NULL DEFAULT 0, harvest_tarp REAL NOT NULL DEFAULT 0,
-            sold_land REAL NOT NULL DEFAULT 0, sold_tarp REAL NOT NULL DEFAULT 0,
-            remaining_land REAL NOT NULL DEFAULT 0, remaining_tarp REAL NOT NULL DEFAULT 0,
-            processed_fine REAL NOT NULL DEFAULT 0, processed_iodized REAL NOT NULL DEFAULT 0,
-            households INTEGER NOT NULL DEFAULT 0, workers INTEGER NOT NULL DEFAULT 0,
-            price_land TEXT NOT NULL DEFAULT '', price_tarp TEXT NOT NULL DEFAULT '',
-            damage_land REAL NOT NULL DEFAULT 0, damage_tarp REAL NOT NULL DEFAULT 0,
-            note TEXT NOT NULL DEFAULT '', created_by INTEGER NOT NULL REFERENCES users(id),
-            created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-            UNIQUE(ma_don_vi_hanh_chinh,week_code)
-        );
-        CREATE INDEX IF NOT EXISTS IX_SaltWeeklyRecordPeriod
-            ON salt_weekly_records(week_code,ma_don_vi_hanh_chinh);
-        CREATE INDEX IF NOT EXISTS IX_SaltImportBatchPeriod
-            ON salt_import_batches(week_code,imported_at);
-        CREATE VIEW IF NOT EXISTS v_dn_sanluongmuoi_weekly_qd5277 AS
-        SELECT id AS Ma_SanLuongMuoi, ma_don_vi_hanh_chinh AS Ma_DonViHanhChinh,
-               week_code AS Ma_ThoiGian, phuong_phap_sx AS PhuongPhapSX,
-               dien_tich AS DienTich, san_luong AS SanLuong,
-               gia_ban_binh_quan AS GiaBanBinhQuan
-        FROM salt_weekly_records;
-
         -- =========================================================
         -- LỚP DỮ LIỆU CHUẨN HÓA THEO QUY ĐỊNH KỸ THUẬT CSDL
         -- TỔNG HỢP NGÀNH NÔNG NGHIỆP
@@ -416,6 +353,7 @@ def init_db():
         ON DM_DonViHanhChinh(TenDonVi);
         """
     )
+    migrate_weekly(con)
     count = con.execute("SELECT COUNT(*) FROM users").fetchone()[0]
     if count == 0:
         demo_password = hash_password("123456")
@@ -1090,36 +1028,21 @@ def get_units(con):
 
 
 def dashboard_page(session, query=""):
-    """Dashboard from the selected weekly sheet, compared with its predecessor."""
-    con = db_conn()
-    batches = con.execute(
-        """SELECT b.*,u.username FROM salt_import_batches b
-           JOIN users u ON u.id=b.imported_by
-           ORDER BY b.report_date DESC,b.id DESC"""
-    ).fetchall()
-    if not batches:
-        con.close()
-        return legacy_dashboard_page(session)
-
-    requested = parse_qs(query).get("batch", [""])[0].strip()
-    selected_index = next((i for i, batch in enumerate(batches) if str(batch["id"]) == requested), 0)
-    selected = batches[selected_index]
-    previous = batches[selected_index + 1] if selected_index + 1 < len(batches) else None
+    """Dashboard for effective weekly records, compared with a distinct earlier week."""
     official = canonical_admin_unit(session["unit_name"]) if session["role"] == ROLE_UNIT else None
-
-    def batch_rows(batch):
-        if not batch:
-            return []
-        sql = "SELECT canonical_data_json FROM salt_weekly_import_rows WHERE batch_id=?"
-        args = [batch["id"]]
-        if session["role"] == ROLE_UNIT:
-            sql += " AND ma_don_vi_hanh_chinh=?"
-            args.append(official[1] if official else "")
-        return [json.loads(row["canonical_data_json"]) for row in con.execute(sql, args).fetchall()]
-
-    rows = batch_rows(selected)
-    previous_rows = batch_rows(previous)
-    con.close()
+    params = parse_qs(query)
+    con = db_conn()
+    try:
+        data = effective_weekly_dashboard(
+            con, week=params.get("week", [""])[0].strip(),
+            batch=params.get("batch", [""])[0].strip(),
+            unit_code=(official[1] if official else "") if session["role"] == ROLE_UNIT else None)
+    finally:
+        con.close()
+    if data is None:
+        return legacy_dashboard_page(session)
+    periods, selected, previous = data["periods"], data["selected"], data["previous"]
+    rows, previous_rows = data["rows"], data["previous_rows"]
 
     def sums(source):
         return {
@@ -1132,7 +1055,7 @@ def dashboard_page(session, query=""):
 
     current_totals, previous_totals = sums(rows), sums(previous_rows)
     period_label = date.fromisoformat(str(selected["report_date"])).strftime("%d/%m/%Y")
-    previous_label = (date.fromisoformat(str(previous["report_date"])).strftime("%d/%m/%Y")
+    previous_label = (previous["week_code"] + " · " + date.fromisoformat(str(previous["report_date"])).strftime("%d/%m/%Y")
                       if previous else "chưa có kỳ trước")
 
     def metric_panel(label, total_key, land_key, tarp_key, unit, symbol, amber=False):
@@ -1144,7 +1067,7 @@ def dashboard_page(session, query=""):
             marker = "+" if difference > 0 else ""
             delta = f'<div class="metric-delta"><strong>{marker}{fmt_num(difference)}</strong> {esc(unit)} so với {esc(previous_label)}</div>'
         else:
-            delta = '<div class="metric-delta muted">Chưa có sheet trước để so sánh</div>'
+            delta = '<div class="metric-delta muted">Chưa có tuần trước để so sánh</div>'
         return f"""<article class="metric-panel{tone}">
           <div class="metric-top"><h3>{label}</h3>{icon(symbol)}</div>
           <div class="metric-middle"><div><div class="metric-number">{fmt_num(total)}</div><div class="metric-caption">{unit} · lũy tiến đến {esc(period_label)}</div>{delta}</div><div class="metric-symbol">{icon(symbol)}</div></div>
@@ -1158,34 +1081,34 @@ def dashboard_page(session, query=""):
         metric_panel('SẢN LƯỢNG MUỐI CÒN LẠI', 'remaining_total', 'remaining_land', 'remaining_tarp', 'tấn', 'stock', True),
     ])
     options = ''.join(
-        f'<option value="{batch["id"]}" {"selected" if batch["id"] == selected["id"] else ""}>'
-        f'{esc(batch["sheet_name"])} · {esc(batch["week_code"])}</option>'
-        for batch in batches
+        f'<option value="{period["week_code"]}" {"selected" if period["week_code"] == selected["week_code"] else ""}>'
+        f'{esc(period["week_code"])}</option>'
+        for period in periods
     )
     status_cards = ''.join([
-        f'<a class="status-card draft" href="/salt/weekly"><span class="status-icon">{icon("file")}</span><div><div class="status-card-count">{len(batches)}</div><div class="status-card-label">Sheet đã import</div></div></a>',
-        f'<a class="status-card approved" href="/salt/weekly?batch={selected["id"]}"><span class="status-icon">{icon("check")}</span><div><div class="status-card-count">{len(rows)}</div><div class="status-card-label">Đơn vị trong kỳ</div></div></a>',
-        f'<a class="status-card submitted" href="/salt/weekly?batch={selected["id"]}"><span class="status-icon">{icon("chart")}</span><div><div class="status-card-count">{selected["warning_rows"]}</div><div class="status-card-label">Dòng cảnh báo</div></div></a>',
-        f'<a class="status-card returned" href="/salt/weekly?batch={previous["id"] if previous else selected["id"]}"><span class="status-icon">{icon("return")}</span><div><div class="status-card-count">{previous["week_code"] if previous else "—"}</div><div class="status-card-label">Kỳ dùng để so sánh</div></div></a>',
+        f'<a class="status-card draft" href="/salt/weekly"><span class="status-icon">{icon("file")}</span><div><div class="status-card-count">{len(periods)}</div><div class="status-card-label">Tuần có dữ liệu</div></div></a>',
+        f'<a class="status-card approved" href="/salt/weekly?week={selected["week_code"]}"><span class="status-icon">{icon("check")}</span><div><div class="status-card-count">{len(rows)}</div><div class="status-card-label">Đơn vị trong kỳ</div></div></a>',
+        f'<a class="status-card submitted" href="/salt/weekly?week={selected["week_code"]}"><span class="status-icon">{icon("chart")}</span><div><div class="status-card-count">{data["warning_rows"]}</div><div class="status-card-label">Dòng cảnh báo</div></div></a>',
+        f'<a class="status-card returned" href="/salt/weekly?week={previous["week_code"] if previous else selected["week_code"]}"><span class="status-icon">{icon("return")}</span><div><div class="status-card-count">{previous["week_code"] if previous else "—"}</div><div class="status-card-label">Kỳ dùng để so sánh</div></div></a>',
     ])
     summary_rows = ''.join(
         f'<tr><td>{esc(row["unit_name"])}</td><td>{fmt_num(row["dien_tich"])}</td><td>{fmt_num(row["san_luong"])}</td><td>{fmt_num(row["sold_total"])}</td><td>{fmt_num(row["remaining_total"])}</td><td>{fmt_num(row["households"])}</td><td>{fmt_num(row["workers"])}</td></tr>'
         for row in sorted(rows, key=lambda item: item["unit_name"])
-    ) or '<tr><td colspan="7" class="empty">Đơn vị này chưa có dữ liệu trong sheet.</td></tr>'
+    ) or '<tr><td colspan="7" class="empty">Đơn vị này chưa có dữ liệu trong tuần.</td></tr>'
     scope = "Tất cả đơn vị" if is_chi_cuc_user(session) else session["unit_name"]
     body = f"""
     <div class="container">
       {take_flash(session)}
-      <div class="page-head"><div><h1>Bảng giám sát</h1><div class="subtitle">Số liệu lũy tiến của một sheet tuần và mức thay đổi so với sheet liền trước.</div></div><a class="btn primary" href="/import-excel">{icon('download')}Import báo cáo tuần</a></div>
-      <div class="dashboard-toolbar"><form class="dashboard-period" method="get"><div class="field"><label>Kỳ đang xem</label><select name="batch">{options}</select></div><button class="btn primary">Xem dashboard</button></form><div class="scope-label">{icon('location')}<span>Đơn vị: <strong>{esc(scope)}</strong></span></div></div>
+      <div class="page-head"><div><h1>Bảng giám sát</h1><div class="subtitle">Số liệu lũy tiến có hiệu lực của tuần và mức thay đổi so với tuần có dữ liệu gần nhất trước đó.</div></div><a class="btn primary" href="/import-excel">{icon('download')}Import báo cáo tuần</a></div>
+      <div class="dashboard-toolbar"><form class="dashboard-period" method="get"><div class="field"><label>Kỳ đang xem</label><select name="week">{options}</select></div><button class="btn primary">Xem dashboard</button></form><div class="scope-label">{icon('location')}<span>Đơn vị: <strong>{esc(scope)}</strong></span></div></div>
       <div class="status-overview" aria-label="Tình trạng báo cáo tuần">{status_cards}</div>
       <section class="dashboard-panel">
-        <div class="panel-heading"><h2 class="panel-title"><span class="panel-title-icon">{icon('chart')}</span>SỐ LIỆU SẢN XUẤT MUỐI</h2><div class="panel-meta">{esc(selected['sheet_name'])} · {esc(selected['week_code'])}<br>So sánh với: {esc(previous['sheet_name']) if previous else 'Chưa có sheet trước'}</div></div>
+        <div class="panel-heading"><h2 class="panel-title"><span class="panel-title-icon">{icon('chart')}</span>SỐ LIỆU SẢN XUẤT MUỐI</h2><div class="panel-meta">{esc(selected['week_code'])}<br>So sánh với: {esc(previous['week_code']) if previous else 'Chưa có tuần trước'}</div></div>
         <div class="dashboard-metrics">{metrics}</div>
         <div class="people-metrics"><div class="people-card"><div><div class="label">Số hộ làm muối</div><div class="value">{fmt_num(current_totals['households'])} <small>hộ</small></div></div>{icon('home')}</div><div class="people-card"><div><div class="label">Lao động làm muối</div><div class="value">{fmt_num(current_totals['workers'])} <small>người</small></div></div>{icon('users')}</div></div>
-        <p class="dashboard-note">Không cộng nhiều tuần: đây là số lũy tiến của sheet đang chọn. Chênh lệch bằng kỳ đang xem trừ kỳ liền trước theo ngày chốt.</p>
+        <p class="dashboard-note">Số liệu có hiệu lực của tuần đang chọn. Chênh lệch bằng tuần đang xem trừ tuần có dữ liệu gần nhất trước đó; các lần upload cùng tuần không tạo thêm kỳ so sánh.</p>
       </section>
-      <section class="dashboard-panel"><div class="panel-heading"><h2 class="panel-title"><span class="panel-title-icon">{icon('table')}</span>CHI TIẾT THEO ĐƠN VỊ</h2><a class="btn small" href="/salt/weekly?batch={selected['id']}">Mở bảng Excel</a></div><div class="table-wrap"><table class="summary-table"><thead><tr><th>Đơn vị</th><th>Diện tích (ha)</th><th>Thu hoạch (tấn)</th><th>Tiêu thụ (tấn)</th><th>Còn lại (tấn)</th><th>Số hộ</th><th>Lao động</th></tr></thead><tbody>{summary_rows}</tbody></table></div></section>
+      <section class="dashboard-panel"><div class="panel-heading"><h2 class="panel-title"><span class="panel-title-icon">{icon('table')}</span>CHI TIẾT THEO ĐƠN VỊ</h2><a class="btn small" href="/salt/weekly?week={selected['week_code']}">Lịch sử Excel của tuần</a></div><div class="table-wrap"><table class="summary-table"><thead><tr><th>Đơn vị</th><th>Diện tích (ha)</th><th>Thu hoạch (tấn)</th><th>Tiêu thụ (tấn)</th><th>Còn lại (tấn)</th><th>Số hộ</th><th>Lao động</th></tr></thead><tbody>{summary_rows}</tbody></table></div></section>
     </div>"""
     return base_page("Tổng quan", body, session)
 

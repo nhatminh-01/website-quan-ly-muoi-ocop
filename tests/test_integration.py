@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 
 import server
 import ocop_db
+from migrate_weekly import SCHEMA as WEEKLY_SCHEMA
 
 
 def legacy_schema():
@@ -20,7 +21,7 @@ def legacy_schema():
     init = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "init_db")
     return next(n.args[0].value for n in ast.walk(init)
                 if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-                and n.func.attr == "executescript")
+                and n.func.attr == "executescript") + WEEKLY_SCHEMA
 
 
 class Client:
@@ -373,8 +374,8 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(self.row("SELECT COUNT(*) AS n FROM records")["n"],0)
         self.assertEqual(self.row("SELECT COUNT(*) AS n FROM DN_SanLuongMuoi")["n"],0)
         dashboard=self.admin.request('GET','/dashboard')[2].decode()
-        self.assertIn('Mau · 2026-W27',dashboard)
-        self.assertIn('Chưa có sheet trước để so sánh',dashboard)
+        self.assertIn('2026-W27',dashboard)
+        self.assertIn('Chưa có tuần trước để so sánh',dashboard)
         self.assertIn('2</div><div class="status-card-label">Đơn vị trong kỳ',dashboard)
         body=self.admin.request('GET','/salt/weekly?week=2026-W27')[2].decode()
         self.assertIn('1</strong><span>sheet báo cáo',body)
