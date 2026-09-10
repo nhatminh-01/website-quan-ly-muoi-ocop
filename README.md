@@ -1,5 +1,7 @@
 # Website nội bộ quản lý số liệu sản xuất muối
 
+Bản nâng cấp sidebar, chuyên viên và migration: [hướng dẫn triển khai](UI_ROLE_MIGRATION_REPORT.md).
+
 Lịch sử thay đổi hệ thống: [CHANGELOG.md](CHANGELOG.md).
 
 ## OCOP giai đoạn 2 — bản kiểm thử

@@ -24,8 +24,10 @@ import sys
 import threading
 import time
 import logging
-import psycopg
-from backend_db import compat_connect, load_settings
+from backend_db import compat_connect, load_settings, INTEGRITY_ERRORS
+from permissions import (ROLE_ADMIN, ROLE_STAFF, ROLE_UNIT, ROLE_LABELS,
+                         is_admin, is_chi_cuc_user, can_manage_users, can_review_records)
+from salt_normalization import sync_methods
 import repositories
 from datetime import datetime, date
 from http import cookies
@@ -45,8 +47,6 @@ ASSET_FILES = {
 HOST = os.environ.get("SALT_WEB_HOST", "0.0.0.0")
 PORT = int(os.environ.get("SALT_WEB_PORT", "8080"))
 
-ROLE_ADMIN = "admin"
-ROLE_UNIT = "unit"
 STATUS_DRAFT = "draft"
 STATUS_SUBMITTED = "submitted"
 STATUS_APPROVED = "approved"
@@ -162,10 +162,15 @@ def get_user(con, user_id):
     return con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
 
 
-def find_active_user(con, username):
+def find_user_by_username(con, username):
     if using_postgres():
-        return repositories.find_active_user(con, username)
-    return con.execute("SELECT * FROM users WHERE username=? AND active=1", (username,)).fetchone()
+        return repositories.find_user_by_username(con, username)
+    return con.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+
+
+def find_active_user(con, username):
+    user = find_user_by_username(con, username)
+    return user if user and user["active"] else None
 
 
 def create_user(con, username, password_hash, role, unit_name, created_at):
@@ -259,7 +264,7 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL UNIQUE,
             password_hash TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('admin','unit')),
+            role TEXT NOT NULL CHECK(role IN ('admin','staff','unit')),
             unit_name TEXT,
             active INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL
@@ -609,7 +614,7 @@ def ensure_standard_time(con, report_date):
 
 
 def sync_standard_salt_record(con, record):
-    """Đồng bộ record lũy tiến mới nhất của tháng sang một dòng Truyền thống."""
+    """Đồng bộ báo cáo lũy tiến mới nhất theo tháng, tách riêng từng phương pháp."""
     if not record:
         return
 
@@ -626,33 +631,7 @@ def sync_standard_salt_record(con, record):
         (record["unit_name"], month_start.isoformat(), next_month.isoformat()),
     ).fetchone()
 
-    con.execute(
-        """
-        DELETE FROM DN_SanLuongMuoi
-        WHERE Ma_DonViHanhChinh=?
-          AND Ma_ThoiGian=?
-          AND PhuongPhapSX IN ('Truyền thống', 'Trải bạt')
-        """,
-        (unit_code, time_code),
-    )
-    if not latest:
-        return
-
-    area = float(latest["area_land"] or 0) + float(latest["area_tarp"] or 0)
-    production = float(latest["harvest_land"] or 0) + float(latest["harvest_tarp"] or 0)
-    standard_price = None if using_postgres() else 0
-    con.execute(
-        """
-        INSERT INTO DN_SanLuongMuoi
-        (Ma_DonViHanhChinh, Ma_ThoiGian, PhuongPhapSX, DienTich, SanLuong, GiaBanBinhQuan)
-        VALUES(?, ?, 'Truyền thống', ?, ?, ?)
-        ON CONFLICT(Ma_DonViHanhChinh, Ma_ThoiGian, PhuongPhapSX) DO UPDATE SET
-            DienTich=excluded.DienTich,
-            SanLuong=excluded.SanLuong,
-            GiaBanBinhQuan=excluded.GiaBanBinhQuan
-        """,
-        (unit_code, time_code, round(area, 2), round(production, 2), standard_price),
-    )
+    sync_methods(con.execute, unit_code, time_code, latest, postgres=using_postgres())
 
 
 def sync_all_approved_records():
@@ -804,7 +783,7 @@ def get_session(handler):
             current = get_user(con, s["user_id"])
         finally:
             con.close()
-        if (not current or not current["active"] or current["role"] not in (ROLE_ADMIN, ROLE_UNIT)
+        if (not current or not current["active"] or current["role"] not in tuple(ROLE_LABELS)
                 or s.get("auth_version") != current["password_hash"]):
             with SESSION_LOCK:
                 SESSIONS.pop(sid, None)
@@ -875,6 +854,24 @@ def icon(name):
     return f'<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">{paths.get(name, paths["file"])}</svg>'
 
 
+def sidebar_group(group, items, current):
+    links = []
+    for href, symbol, label in items:
+        active = href == current
+        links.append(f'<a class="sidebar-link{" active" if active else ""}" href="{href}" title="{label}"'
+                     + (' aria-current="page"' if active else '')
+                     + f'>{icon(symbol)}<span class="sidebar-label">{label}</span></a>')
+    content = ''.join(links)
+    if group not in ("DIÊM NGHIỆP", "OCOP"):
+        return f'<div class="sidebar-section">{group}</div>{content}'
+    key = "ocop" if group == "OCOP" else "salt"
+    active = any(href == current for href, _, _ in items)
+    return (f'<details class="sidebar-group" data-group="{key}" data-active="{str(active).lower()}"'
+            + (' open' if active else '') + f'><summary title="{group}"><span class="group-label">{group}</span>'
+            + '<svg class="group-chevron icon" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>'
+            + f'</summary><div class="sidebar-group-links">{content}</div></details>')
+
+
 def base_page(title, body, session=None, active_path=None):
     top = ""
     if session:
@@ -894,8 +891,9 @@ def base_page(title, body, session=None, active_path=None):
         salt_items = [("/records", "table", "Dữ liệu sản xuất muối"),
                       ("/records/new", "plus", "Nhập số liệu")]
         system_items = []
-        if session["role"] == ROLE_ADMIN:
+        if is_chi_cuc_user(session):
             salt_items.append(("/standard-data", "file", "Dữ liệu chuẩn hóa"))
+        if can_manage_users(session):
             system_items.append(("/users", "users", "Tài khoản"))
         system_items.extend([("/change-password", "key", "Đổi mật khẩu"),
                              ("/logout", "logout", "Đăng xuất")])
@@ -908,18 +906,12 @@ def base_page(title, body, session=None, active_path=None):
                                         ("/ocop/applications", "file", "Hồ sơ đánh giá"),
                                         ("/ocop/criteria", "table", "Bộ tiêu chí")]))
         nav_groups.append(("HỆ THỐNG", system_items))
-        nav = []
-        for group, items in nav_groups:
-            nav.append(f'<div class="sidebar-section" style="margin-top:16px">{group}</div>')
-            for href, symbol, label in items:
-                active = ' active' if href == current else ''
-                aria = ' aria-current="page"' if href == current else ''
-                nav.append(f'<a class="sidebar-link{active}" href="{href}" title="{label}"{aria}>{icon(symbol)}<span class="sidebar-label">{label}</span></a>')
+        nav = [sidebar_group(group, items, current) for group, items in nav_groups]
         name = account_display_name(session)
         display_label = esc(name)
         if name == "CHI CỤC PHÁT TRIỂN NÔNG THÔN THÀNH PHỐ HỒ CHÍ MINH":
             display_label = 'CHI CỤC PHÁT TRIỂN NÔNG THÔN<br>THÀNH PHỐ HỒ CHÍ MINH'
-        role_label = "Quản trị Chi cục" if session["role"] == ROLE_ADMIN else "Đơn vị xã/phường"
+        role_label = ROLE_LABELS[session["role"]]
         initial = esc((session['username'] or 'U')[0].upper())
         top = f"""
         <a class="skip-link" href="#main-content">Đến nội dung chính</a>
@@ -937,12 +929,12 @@ def base_page(title, body, session=None, active_path=None):
         <aside class="sidebar" id="site-sidebar" aria-label="Menu chính">
           <form class="sidebar-search" action="/records" method="get" role="search"><button type="submit" aria-label="Tìm báo cáo muối">{icon('search')}</button><input name="q" type="search" placeholder="Tìm báo cáo muối..." aria-label="Tìm báo cáo muối theo đơn vị hoặc ghi chú"></form>
           <nav class="sidebar-nav" aria-label="Chức năng">{''.join(nav)}</nav>
-          <div class="sidebar-footer"><img class="sidebar-watermark" src="/assets/quoc-huy.png" alt="" width="148" height="152"><div class="sidebar-footer-line"></div><strong>TRUNG TÂM CHUYỂN ĐỔI SỐ NÔNG NGHIỆP VÀ MÔI TRƯỜNG</strong><p>Theo dõi sản xuất và tổng hợp báo cáo các đơn vị.</p></div>
+          <div class="sidebar-footer"><img class="sidebar-watermark" src="/assets/quoc-huy.png" alt="" width="148" height="152"><div class="sidebar-footer-line"></div><strong><span>TRUNG TÂM CHUYỂN ĐỔI SỐ</span><span>NÔNG NGHIỆP VÀ MÔI TRƯỜNG</span></strong><p>Theo dõi sản xuất và tổng hợp báo cáo các đơn vị.</p></div>
         </aside>
         <button type="button" id="sidebar-backdrop" class="sidebar-backdrop" aria-label="Đóng menu" tabindex="-1"></button>
         """
         body = f'<main class="app-main" id="main-content">{body}</main>'
-    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260909-ocop2"><script src="/assets/app.js?v=20260908-red" defer></script></head><body>{top}{body}</body></html>"""
+    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260910-roles"><script src="/assets/app.js?v=20260910-groups" defer></script></head><body>{top}{body}</body></html>"""
 
 
 def login_page(message=""):
@@ -1010,7 +1002,7 @@ def get_units(con):
 
 def dashboard_page(session):
     con = db_conn()
-    if session["role"] == ROLE_ADMIN:
+    if is_chi_cuc_user(session):
         rows = con.execute("SELECT * FROM records WHERE status='approved' ORDER BY report_date DESC").fetchall()
         status_counts = {s: con.execute("SELECT COUNT(*) FROM records WHERE status=?", (s,)).fetchone()[0] for s in STATUS_LABELS}
     else:
@@ -1027,7 +1019,7 @@ def dashboard_page(session):
         totals["households"] += r["households"] or 0
         totals["workers"] += r["workers"] or 0
 
-    if session["role"] == ROLE_ADMIN:
+    if is_chi_cuc_user(session):
         unit_summary = con.execute(
             """SELECT unit_name,
                SUM(area_land+area_tarp) area_total,
@@ -1077,11 +1069,11 @@ def dashboard_page(session):
         f'<a class="status-card {state}" href="/records?status={state}"><span class="status-icon">{icon(status_symbols[state])}</span><div><div class="status-card-count">{status_counts[state]}</div><div class="status-card-label">{status_short[state]}</div></div></a>'
         for state in STATUS_LABELS
     )
-    scope = 'Tất cả đơn vị' if session['role'] == ROLE_ADMIN else session['unit_name']
+    scope = 'Tất cả đơn vị' if is_chi_cuc_user(session) else session['unit_name']
     latest = max((r['updated_at'] for r in rows), default='')
     updated_label = f'Cập nhật báo cáo: {esc(latest)}' if latest else 'Chưa có báo cáo được duyệt'
     summary_html = ''
-    if session['role'] == ROLE_ADMIN:
+    if is_chi_cuc_user(session):
         if unit_summary:
             rows_html = ''.join(
                 f"<tr><td>{esc(r['unit_name'])}</td><td>{fmt_num(r['area_total'])}</td><td>{fmt_num(r['harvest_total'])}</td><td>{fmt_num(r['sold_total'])}</td><td>{fmt_num(r['remaining_total'])}</td><td>{fmt_num(r['households'])}</td><td>{fmt_num(r['workers'])}</td><td>{r['reports']}</td></tr>"
@@ -1113,7 +1105,7 @@ def dashboard_page(session):
 
 def record_action_buttons(session, r):
     actions = [f'<a class="btn small" href="/records/{r["id"]}">Xem</a>']
-    if session["role"] == ROLE_ADMIN:
+    if is_chi_cuc_user(session):
         actions.append(f'<a class="btn small" href="/records/{r["id"]}/edit">Sửa</a>')
         if r["status"] == STATUS_SUBMITTED:
             actions.append(f'<form style="display:inline" method="post" action="/records/{r["id"]}/approve">{csrf_input(session)}<button class="btn small ok">Duyệt</button></form>')
@@ -1148,7 +1140,7 @@ def records_page(session, query):
     table_body = ''.join(trs) if trs else '<tr><td colspan="11" class="empty">Chưa có dữ liệu phù hợp.</td></tr>'
 
     query_string = '&'.join(f"{quote(k)}={quote(v)}" for k,v in filters.items() if v)
-    standard_button = '<a class="btn" href="/standard-data">Dữ liệu chuẩn hóa</a>' if session["role"] == ROLE_ADMIN else ''
+    standard_button = '<a class="btn" href="/standard-data">Dữ liệu chuẩn hóa</a>' if is_chi_cuc_user(session) else ''
     body = f"""
     <div class="container">
       {take_flash(session)}
@@ -1168,7 +1160,7 @@ def records_page(session, query):
 
 
 def standard_data_page(session):
-    if session["role"] != ROLE_ADMIN:
+    if not is_chi_cuc_user(session):
         return None
 
     con = db_conn()
@@ -1274,7 +1266,7 @@ def record_form_page(session, record=None, error=""):
     v = lambda key, default="": record[key] if record is not None and key in record.keys() else default
     unit_name = session["unit_name"] if session["role"] == ROLE_UNIT else v("unit_name", units[0] if units else "")
     unit_select = ''.join(f'<option value="{esc(u)}" {"selected" if u==unit_name else ""}>{esc(u)}</option>' for u in units)
-    unit_html = f'<div class="field"><label>Đơn vị xã/phường</label><select name="unit_name" required>{unit_select}</select></div>' if session["role"] == ROLE_ADMIN else f'<div class="field"><label>Đơn vị xã/phường</label><input value="{esc(unit_name)}" readonly></div><input type="hidden" name="unit_name" value="{esc(unit_name)}">'
+    unit_html = f'<div class="field"><label>Đơn vị xã/phường</label><select name="unit_name" required>{unit_select}</select></div>' if is_chi_cuc_user(session) else f'<div class="field"><label>Đơn vị xã/phường</label><input value="{esc(unit_name)}" readonly></div><input type="hidden" name="unit_name" value="{esc(unit_name)}">'
     action = f'/records/{record["id"]}/edit' if is_edit else '/records/new'
     notice = f'<div class="notice err">{esc(error)}</div>' if error else ''
     reviewer = ""
@@ -1362,7 +1354,7 @@ def record_form_page(session, record=None, error=""):
 
 
 def can_access_record(session, r):
-    return session["role"] == ROLE_ADMIN or r["unit_name"] == session["unit_name"]
+    return is_chi_cuc_user(session) or r["unit_name"] == session["unit_name"]
 
 
 def detail_page(session, rid):
@@ -1404,7 +1396,7 @@ def detail_page(session, rid):
 
 def return_page(session, rid):
     con = db_conn(); r = con.execute("SELECT * FROM records WHERE id=?",(rid,)).fetchone(); con.close()
-    if not r or session["role"] != ROLE_ADMIN:
+    if not r or not is_chi_cuc_user(session):
         return None
     body = f"""
     <div class="container"><div class="page-head"><div><h1>Yêu cầu chỉnh sửa</h1><div class="subtitle">{esc(r['unit_name'])} · {esc(r['report_date'])}</div></div></div>
@@ -1413,7 +1405,7 @@ def return_page(session, rid):
     return base_page("Yêu cầu chỉnh sửa", body, session)
 
 def users_page(session):
-    if session["role"] != ROLE_ADMIN:
+    if not can_manage_users(session):
         return None
 
     con = db_conn()
@@ -1434,11 +1426,11 @@ def users_page(session):
         if not cannot_delete:
             actions += f"""
             <form method="post"
-                  action="/users/{u['id']}/delete"
+                  action="/users/{u['id']}/{'deactivate' if u['active'] else 'activate'}"
                   style="display:inline"
-                  onsubmit="return confirm('Bạn có chắc muốn xóa/khóa tài khoản này?')">
+                  >
                 {csrf_input(session)}
-                <button class="btn small warn" type="submit">Xóa</button>
+                <button class="btn small warn" type="submit">{"Ngưng kích hoạt" if u["active"] else "Kích hoạt lại"}</button>
             </form>
             """
 
@@ -1447,9 +1439,9 @@ def users_page(session):
         trs += f"""
         <tr>
             <td>{esc(u["username"])}</td>
-            <td>{"Chi cục" if u["role"] == ROLE_ADMIN else "Đơn vị xã/phường"}</td>
+            <td>{esc(ROLE_LABELS.get(u["role"], u["role"]))}</td>
             <td>{esc(u["unit_name"] or "")}</td>
-            <td>{"Hoạt động" if u["active"] else "Đã khóa"}</td>
+            <td>{"Hoạt động" if u["active"] else "Ngưng hoạt động"}</td>
             <td>{actions}</td>
         </tr>
         """
@@ -1487,7 +1479,8 @@ def users_page(session):
               <label>Vai trò</label>
               <select name="role">
                 <option value="unit">Đơn vị xã/phường</option>
-                <option value="admin">Chi cục</option>
+                <option value="staff">Chuyên viên Chi cục</option>
+                <option value="admin">Quản trị Chi cục</option>
               </select>
             </div>
 
@@ -1530,7 +1523,7 @@ def users_page(session):
 
 
 def user_edit_page(session, user, error=""):
-    if session["role"] != ROLE_ADMIN:
+    if not can_manage_users(session):
         return None
 
     notice = (
@@ -1539,6 +1532,7 @@ def user_edit_page(session, user, error=""):
     )
 
     unit_selected = "selected" if user["role"] == ROLE_UNIT else ""
+    staff_selected = "selected" if user["role"] == ROLE_STAFF else ""
     admin_selected = "selected" if user["role"] == ROLE_ADMIN else ""
     active_checked = "checked" if user["active"] else ""
 
@@ -1588,8 +1582,9 @@ def user_edit_page(session, user, error=""):
                 Đơn vị xã/phường
               </option>
 
+              <option value="staff" {staff_selected}>Chuyên viên Chi cục</option>
               <option value="admin" {admin_selected}>
-                Chi cục
+                Quản trị Chi cục
               </option>
             </select>
           </div>
@@ -1629,7 +1624,7 @@ def user_edit_page(session, user, error=""):
     return base_page("Sửa tài khoản", body, session)
 
 def import_excel_page(session):
-    if session["role"] != ROLE_ADMIN:
+    if not is_chi_cuc_user(session):
         return None
 
     body = f"""
@@ -1754,7 +1749,7 @@ def import_excel_data(
     mode="skip",
     filename=""
 ):
-    if session["role"] != ROLE_ADMIN:
+    if not is_chi_cuc_user(session):
         return False, "Không có quyền import dữ liệu."
 
     try:
@@ -2212,7 +2207,7 @@ def save_record(session, data, rid=None):
             add_audit(con, rid, session["user_id"], "Cập nhật báo cáo", "Chỉnh sửa số liệu")
         con.commit()
         return True, rid
-    except (sqlite3.IntegrityError, psycopg.IntegrityError):
+    except INTEGRITY_ERRORS:
         con.rollback()
         return False, f"Đơn vị {unit_name} đã có báo cáo ngày {report_date}. Hãy mở báo cáo đó để cập nhật."
     finally:
@@ -2281,7 +2276,7 @@ def ocop_access_page(con, session):
 
 def save_ocop_access(con, session, data):
     import ocop_services as svc
-    if session["role"] != ROLE_ADMIN:
+    if not can_manage_users(session):
         raise svc.OcopError("Chỉ Chi cục được phân địa bàn OCOP.", 403)
     try:
         uid = int(data.get("user_id", ""))
@@ -2290,8 +2285,10 @@ def save_ocop_access(con, session, data):
     code = str(data.get("unit_code", "")).strip()
     with con:
         con.execute("BEGIN IMMEDIATE")
-        if svc.get_scope(con, session) is not None:
-            raise svc.OcopError("Chỉ Chi cục được phân địa bàn OCOP.", 403)
+        current = get_user(con, session["user_id"])
+        if not current or not current["active"] or not can_manage_users(dict(current)):
+            raise svc.OcopError("Chỉ quản trị được phân địa bàn OCOP.", 403)
+        svc.get_scope(con, session)
         user = con.execute("SELECT id FROM users WHERE id=? AND active=1 AND role='unit'", (uid,)).fetchone()
         unit = con.execute("""SELECT Ma_DonViHanhChinh FROM DM_DonViHanhChinh
             WHERE Ma_DonViHanhChinh=? AND TinhTrang=1 AND CapHanhChinh IN ('xa','phuong')
@@ -2504,6 +2501,9 @@ class Handler(BaseHTTPRequestHandler):
         # =========================
         # DASHBOARD
         # =========================
+        if (path == "/users" or path.startswith("/users/") or path.rstrip("/") == "/ocop/access") and not can_manage_users(session):
+            self.send_html(base_page("403", '<div class="container"><div class="notice err">Không có quyền quản lý tài khoản.</div></div>', session), 403)
+            return
         if self.handle_ocop(path, parsed.query, session):
             return
         if path == "/dashboard":
@@ -2696,7 +2696,7 @@ class Handler(BaseHTTPRequestHandler):
         ):
 
             # Chỉ Chi cục được sửa tài khoản
-            if session["role"] != ROLE_ADMIN:
+            if not can_manage_users(session):
 
                 self.send_html(
                     base_page(
@@ -2951,17 +2951,21 @@ class Handler(BaseHTTPRequestHandler):
             data = parse_body(self)
         if path=="/login":
             username=data.get("username","").strip(); password=data.get("password","")
-            con=db_conn(); u=find_active_user(con, username); con.close()
+            con=db_conn(); u=find_user_by_username(con, username); con.close()
             if not u or not verify_password(password,u["password_hash"]): self.send_html(login_page("Tên đăng nhập hoặc mật khẩu không đúng."),401); return
+            if not u["active"]: self.send_html(login_page("Tài khoản không hoạt động. Vui lòng liên hệ Chi cục để được xử lý."),401); return
             sid=new_session(u); self.redirect("/dashboard",[("Set-Cookie",f"salt_session={sid}; Path=/; HttpOnly; SameSite=Lax")]); return
         sid,session=self.require_session()
         if not session: return
         if not check_csrf(session,data): self.send_html(base_page("Lỗi","<div class='container'><div class='notice err'>Phiên làm việc không hợp lệ. Vui lòng tải lại trang.</div></div>",session),400); return
+        if (path == "/users" or path.startswith("/users/") or path.rstrip("/") == "/ocop/access") and not can_manage_users(session):
+            self.send_html(base_page("403", '<div class="container"><div class="notice err">Không có quyền quản lý tài khoản.</div></div>', session), 403)
+            return
         if self.handle_ocop(path, parsed.query, session, data):
             return
         if path == "/import-excel":
 
-            if session["role"] != ROLE_ADMIN:
+            if not is_chi_cuc_user(session):
 
                 self.send_html(
                     base_page(
@@ -3069,13 +3073,13 @@ class Handler(BaseHTTPRequestHandler):
             else: self.send_html(record_form_page(session,None,res),400)
             return
         if path=="/users/new":
-            if session["role"]!=ROLE_ADMIN: self.send_html(base_page("403","<div class='container'><div class='notice err'>Không có quyền.</div></div>",session),403); return
+            if not can_manage_users(session): self.send_html(base_page("403","<div class='container'><div class='notice err'>Không có quyền.</div></div>",session),403); return
             username=data.get("username","").strip(); password=data.get("password",""); role=data.get("role",ROLE_UNIT); unit_name=data.get("unit_name","").strip()
-            if role not in (ROLE_ADMIN,ROLE_UNIT) or len(password)<6 or not username or not unit_name: set_flash(session,"err","Thông tin tài khoản chưa hợp lệ."); self.redirect("/users"); return
+            if role not in tuple(ROLE_LABELS) or len(password)<6 or not username or not unit_name: set_flash(session,"err","Thông tin tài khoản chưa hợp lệ."); self.redirect("/users"); return
             con=db_conn()
             try:
                 create_user(con, username, hash_password(password), role, unit_name, now_text()); con.commit(); set_flash(session,"ok","Đã tạo tài khoản.")
-            except (sqlite3.IntegrityError, psycopg.IntegrityError): set_flash(session,"err","Tên đăng nhập đã tồn tại.")
+            except INTEGRITY_ERRORS: set_flash(session,"err","Tên đăng nhập đã tồn tại.")
             finally: con.close()
             self.redirect("/users"); return
         if path=="/change-password":
@@ -3090,7 +3094,7 @@ class Handler(BaseHTTPRequestHandler):
             and parts[0] == "users"
             and parts[1].isdigit()
         ):
-            if session["role"] != ROLE_ADMIN:
+            if not can_manage_users(session):
                 self.send_html(
                     base_page(
                         "403",
@@ -3103,6 +3107,24 @@ class Handler(BaseHTTPRequestHandler):
 
             uid = int(parts[1])
             action = parts[2]
+
+            if action in ("activate", "deactivate"):
+                if uid == session["user_id"] and action == "deactivate":
+                    self.send_html(base_page("Không thể ngưng kích hoạt", '<div class="container">Không thể ngưng kích hoạt tài khoản đang đăng nhập.</div>', session), 400)
+                    return
+                con = db_conn()
+                try:
+                    if not get_user(con, uid):
+                        self.send_error(404)
+                        return
+                    repositories.set_user_active(con, uid, action == "activate")
+                    con.commit()
+                    invalidate_user_sessions(uid)
+                finally:
+                    con.close()
+                set_flash(session, "ok", "Đã kích hoạt lại tài khoản." if action == "activate" else "Đã ngưng kích hoạt tài khoản.")
+                self.redirect("/users")
+                return
 
             # ======================
             # SỬA TÀI KHOẢN
@@ -3136,13 +3158,14 @@ class Handler(BaseHTTPRequestHandler):
                     )
                     return
 
-                if role not in (ROLE_ADMIN, ROLE_UNIT):
+                if role not in tuple(ROLE_LABELS):
                     role = ROLE_UNIT
 
                 # Không cho admin đang đăng nhập tự khóa chính mình
-                if uid == session["user_id"]:
-                    role = ROLE_ADMIN
-                    active = 1
+                if uid == session["user_id"] and (not active or role != ROLE_ADMIN):
+                    con.close()
+                    self.send_html(user_edit_page(session, user, "Không thể tự ngưng kích hoạt hoặc hạ quyền tài khoản đang đăng nhập."), 400)
+                    return
 
                 try:
 
@@ -3167,6 +3190,7 @@ class Handler(BaseHTTPRequestHandler):
                     )
 
                     con.commit()
+                    invalidate_user_sessions(uid)
 
                     set_flash(
                         session,
@@ -3174,7 +3198,7 @@ class Handler(BaseHTTPRequestHandler):
                         "Đã cập nhật tài khoản."
                     )
 
-                except (sqlite3.IntegrityError, psycopg.IntegrityError):
+                except INTEGRITY_ERRORS:
                     con.rollback()
 
                     set_flash(
@@ -3252,6 +3276,7 @@ class Handler(BaseHTTPRequestHandler):
                         "Đã xóa tài khoản."
                     )
 
+                invalidate_user_sessions(uid)
                 self.redirect("/users")
                 return
         if len(parts)>=3 and parts[0]=="records" and parts[1].isdigit():
@@ -3269,7 +3294,7 @@ class Handler(BaseHTTPRequestHandler):
                 if session["role"]!=ROLE_UNIT or r["status"] not in (STATUS_DRAFT,STATUS_RETURNED): con.close(); self.send_html(base_page("Lỗi","<div class='container'><div class='notice err'>Không thể gửi báo cáo này.</div></div>",session),400); return
                 con.execute("UPDATE records SET status='submitted',submitted_at=?,updated_at=? WHERE id=?",(now_text(),now_text(),rid)); add_audit(con,rid,session["user_id"],"Gửi Chi cục","Đề nghị kiểm tra/phê duyệt"); con.commit(); con.close(); set_flash(session,"ok","Đã gửi số liệu lên Chi cục."); self.redirect(f"/records/{rid}"); return
             if action=="approve":
-                if session["role"]!=ROLE_ADMIN or r["status"]!=STATUS_SUBMITTED:
+                if not can_review_records(session) or r["status"]!=STATUS_SUBMITTED:
                     con.close()
                     self.send_html(base_page("Lỗi","<div class='container'><div class='notice err'>Không thể duyệt báo cáo này.</div></div>",session),400)
                     return
@@ -3307,7 +3332,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.redirect(f"/records/{rid}")
                 return
             if action=="return":
-                if session["role"]!=ROLE_ADMIN or r["status"]!=STATUS_SUBMITTED: con.close(); self.send_html(base_page("Lỗi","<div class='container'><div class='notice err'>Không thể trả báo cáo này.</div></div>",session),400); return
+                if not can_review_records(session) or r["status"]!=STATUS_SUBMITTED: con.close(); self.send_html(base_page("Lỗi","<div class='container'><div class='notice err'>Không thể trả báo cáo này.</div></div>",session),400); return
                 note=data.get("reviewer_note","").strip()
                 if not note: con.close(); self.send_html(return_page(session,rid),400); return
                 con.execute("UPDATE records SET status='returned',reviewer_note=?,updated_at=? WHERE id=?",(note,now_text(),rid)); add_audit(con,rid,session["user_id"],"Yêu cầu chỉnh sửa",note); con.commit(); con.close(); set_flash(session,"ok","Đã gửi yêu cầu chỉnh sửa cho đơn vị."); self.redirect(f"/records/{rid}"); return

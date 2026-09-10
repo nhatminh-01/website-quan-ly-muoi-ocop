@@ -46,6 +46,13 @@
     resizeHeader();
     new ResizeObserver(resizeHeader).observe(header);
   }
+  document.querySelectorAll('.sidebar-group').forEach(group => {
+    const key = 'salt-sidebar-group-' + group.dataset.group;
+    try { group.open = group.dataset.active === 'true' || localStorage.getItem(key) === 'true'; } catch (_) {}
+    group.addEventListener('toggle', () => {
+      try { localStorage.setItem(key, String(group.open)); } catch (_) {}
+    });
+  });
   syncMenu();
   const clock = document.getElementById('clock-time');
   const calendar = document.getElementById('clock-date');

@@ -6,12 +6,14 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from collections.abc import Mapping
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from functools import wraps
 import json
 import re
 import secrets
 import sqlite3
+from permissions import ROLE_LABELS, is_chi_cuc_user
 
 try:
     import psycopg
@@ -30,6 +32,14 @@ APP_STATUSES = ("draft", "submitted", "checking", "returned", "eligible", "scori
 EVALUATION_TYPES = ("new", "re_evaluation", "upgrade")
 LOCKED_STATUSES = ("submitted", "checking", "eligible", "scoring", "completed")
 OPEN_STATUSES = ("draft", "submitted", "checking", "returned", "eligible", "scoring")
+
+
+def _json_value(value):
+    if isinstance(value, (date, datetime)):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    raise TypeError(f"Unsupported snapshot value: {type(value).__name__}")
 
 
 def _now():
@@ -117,11 +127,11 @@ def get_scope(con, session):
     if not isinstance(session, dict) or not session.get("user_id"):
         raise OcopError("Vui lòng đăng nhập để sử dụng OCOP.", 403)
     user = _one(con, "SELECT id,role,active FROM users WHERE id=?", (session["user_id"],))
-    if not user or not user["active"] or user["role"] not in ("admin", "unit"):
+    if not user or not user["active"] or user["role"] not in ROLE_LABELS:
         raise OcopError("Tài khoản không có quyền sử dụng OCOP.", 403)
     if session.get("role") != user["role"]:
         raise OcopError("Quyền tài khoản đã thay đổi. Vui lòng đăng nhập lại.", 403)
-    if user["role"] == "admin":
+    if is_chi_cuc_user(user):
         return None
     unit = _one(con, """SELECT d.Ma_DonViHanhChinh AS code FROM user_admin_units m
         JOIN DM_DonViHanhChinh d ON d.Ma_DonViHanhChinh=m.ma_don_vi_hanh_chinh
@@ -253,7 +263,7 @@ def list_criteria_sets(con, session, filters=None):
 
 def criteria_categories(con, session):
     get_scope(con, session)
-    return _all(con, "SELECT DISTINCT product_category AS name FROM ocop_criteria_sets WHERE active=1 ORDER BY sort_order")
+    return _all(con, "SELECT product_category AS name FROM ocop_criteria_sets WHERE active=1 GROUP BY product_category ORDER BY MIN(sort_order),product_category")
 
 
 def get_criteria_tree(con, session, object_id):
@@ -390,7 +400,7 @@ def get_reviews(con, session, application_id):
 
 
 def _audit(con, session, kind, object_id, action, detail, when):
-    payload = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False, sort_keys=True)
+    payload = detail if isinstance(detail, str) else json.dumps(detail, ensure_ascii=False, sort_keys=True, default=_json_value)
     con.execute("""INSERT INTO audit_logs(record_id,user_id,action,detail,created_at,module,object_type,object_id)
         VALUES(NULL,?,?,?,?, 'ocop',?,?)""", (session["user_id"], action, payload, when, kind, str(object_id)))
 
@@ -512,7 +522,7 @@ def _product_values(con, session, data):
 def create_product(con, session, data):
     entity, criteria_set, name, group, description = _product_values(con, session, data)
     code, when = "P" + secrets.token_hex(4).upper(), _now()
-    con.execute("INSERT INTO DM_SanPham(Ma_SanPham,TenSanPham,NhomSanPham,DonViTinh,TrangThai) VALUES(?,?,?,?,1)", (code, name, group, ""))
+    con.execute("INSERT INTO DM_SanPham(Ma_SanPham,TenSanPham,NhomSanPham,DonViTinh,TrangThai) VALUES(?,?,?,?,TRUE)", (code, name, group, ""))
     cursor = con.execute("""INSERT INTO ocop_products(ma_san_pham,ma_co_so,ma_don_vi_hanh_chinh,ten_san_pham,product_group,description,current_star,status,created_by,created_at,updated_at,criteria_set_id)
         VALUES(?,?,?,?,?,?,NULL,'active',?,?,?,?)""", (code, entity["ma_co_so"], entity["ma_don_vi_hanh_chinh"], name, group, description, session["user_id"], when, when, criteria_set["id"]))
     object_id = cursor.lastrowid
@@ -552,7 +562,7 @@ def archive_product(con, session, object_id, data):
     _lock_check(con, product_id=row["id"], archive=True)
     when = _now()
     con.execute("UPDATE ocop_products SET status='archived',updated_at=? WHERE id=? AND updated_at=?", (when, row["id"], row["updated_at"]))
-    con.execute("UPDATE DM_SanPham SET TrangThai=0 WHERE Ma_SanPham=?", (row["ma_san_pham"],))
+    con.execute("UPDATE DM_SanPham SET TrangThai=FALSE WHERE Ma_SanPham=?", (row["ma_san_pham"],))
     _audit(con, session, "product", row["id"], "archive", {"before": row}, when)
     return get_product(con, session, row["id"])
 
@@ -644,7 +654,7 @@ def application_action(con, session, object_id, action, data):
                 raise OcopError("Hồ sơ cũ chưa có bộ tiêu chí; cần cập nhật hồ sơ trước khi gửi lại.", 409)
             criteria_set = _criteria_set_by_id(con, session, row["criteria_set_id"], require_active=False)
         snapshot = {"schema_version": 2, "submitted_at": when, "application": {k: row[k] for k in ("id", "product_id", "evaluation_type", "year")}, "criteria_set": criteria_set, "product": product, "entity": entity, "revision": fields["revision"]}
-        fields.update({"submitted_at": when, "reviewer_id": None, "checked_at": None, "reviewer_note": "", "submission_snapshot_json": json.dumps(snapshot, ensure_ascii=False, sort_keys=True)})
+        fields.update({"submitted_at": when, "reviewer_id": None, "checked_at": None, "reviewer_note": "", "submission_snapshot_json": json.dumps(snapshot, ensure_ascii=False, sort_keys=True, default=_json_value)})
         # Each submit's complete snapshot remains in the append-only audit history.
         detail["submission_snapshot"] = snapshot
     elif action in ("start-review", "return", "eligible"):

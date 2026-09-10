@@ -31,10 +31,9 @@ EXPECTED = {
 CHECKS = [("C", "D", "E"), ("F", "G", "H"), ("I", "J", "K"),
           ("L", "M", "N"), ("W", "X", "Y")]
 UNMAPPED_COLUMNS = [
-    "A - TT", "D/E - diện tích muối đất/trải bạt (chi tiết nền kết tinh)",
-    "G/H - sản lượng thu hoạch muối đất/trải bạt", "I/J/K - sản lượng tiêu thụ",
+    "A - TT", "I/J/K - sản lượng tiêu thụ",
     "L/M/N - sản lượng còn lại", "O/P/Q - sản lượng chế biến", "R - số hộ",
-    "S - số lao động", "T/U - giá bán riêng", "V - năng suất bình quân",
+    "S - số lao động", "V - năng suất bình quân",
     "W/X/Y - thiệt hại do mưa trái mùa", "Z - diện tích mất trắng",
     "AA - ghi chú/ngày mưa", "AB - thời gian kết thúc niên vụ",
 ]
@@ -212,10 +211,10 @@ def write_outputs(project_root: Path, issues: list[Issue], totals: dict[str, Dec
 
 - B -> `Ma_DonViHanhChinh` qua mã hành chính chính thức; alias `An Thời Đông` được sửa thành `An Thới Đông`.
 - Kỳ báo cáo -> `Ma_ThoiGian = '2026-08'`.
-- Business rule -> `PhuongPhapSX = 'Truyền thống'`.
-- C -> `DienTich`.
-- F -> `SanLuong`.
-- `GiaBanBinhQuan = NULL`; không tính từ T/U.
+- Phương pháp -> `Truyền thống` (D/G/T), `Trải bạt` (E/H/U).
+- D/E -> `DienTich` theo từng phương pháp.
+- G/H -> `SanLuong` theo từng phương pháp.
+- `GiaBanBinhQuan`: giá đơn xác định từ T/U; khoảng giá hoặc giá không rõ giữ NULL.
 
 ## Cột Excel chỉ nằm trong staging
 
@@ -223,11 +222,11 @@ def write_outputs(project_root: Path, issues: list[Issue], totals: dict[str, Dec
 
 ## Field QĐ 5277 mà source chưa có trực tiếp
 
-- `Ma_SanLuongMuoi`: khóa kỹ thuật tạo tuần tự 1..8 cho lần validation.
+- `Ma_SanLuongMuoi`: khóa kỹ thuật do sequence tạo; UPSERT theo đơn vị/kỳ/phương pháp.
 - `Ma_DonViHanhChinh`: source chỉ có tên địa bàn, được ánh xạ sang mã chính thức theo Quyết định 19/2025/QĐ-TTg.
 - `Ma_ThoiGian`: suy ra từ snapshot tháng 08/2026; ngày 21/08/2026 chỉ giữ ở staging.
 - `PhuongPhapSX`: áp dụng business rule đã xác nhận, không lấy trực tiếp từ một cột Excel.
-- `GiaBanBinhQuan`: source chỉ có hai giá riêng T/U và chưa có quy tắc gộp, nên để NULL.
+- `GiaBanBinhQuan`: giá được giữ riêng theo phương pháp; không lấy trung bình khoảng giá.
 
 ## Quy ước validation
 

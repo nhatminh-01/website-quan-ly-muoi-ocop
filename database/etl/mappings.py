@@ -7,7 +7,7 @@ import unicodedata
 
 
 TIME_CODE = "2026-08"
-PRODUCTION_METHOD = "Truyền thống"
+PRODUCTION_METHODS = {"land": "Truyền thống", "tarp": "Trải bạt"}
 
 OFFICIAL_ADMIN_CODES = {
     "Xã An Thới Đông": "27673",

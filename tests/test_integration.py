@@ -367,7 +367,7 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(upload(self.admin)[0],303)
         self.assertEqual(upload(self.admin,"update")[0],303)
         self.assertEqual(self.row("SELECT COUNT(*) AS n FROM records")["n"],2)
-        self.assertEqual(self.row("SELECT COUNT(*) AS n FROM DN_SanLuongMuoi")["n"],2)
+        self.assertEqual(self.row("SELECT COUNT(*) AS n FROM DN_SanLuongMuoi")["n"],4)
         status,_,body=self.a.request("GET","/export.xlsx?unit=X%C3%A3+Th%E1%BA%A1nh+An")
         self.assertEqual(status,200)
         exported=load_workbook(io.BytesIO(body),data_only=True)

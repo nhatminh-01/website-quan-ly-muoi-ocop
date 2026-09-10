@@ -17,12 +17,12 @@ def get_user(con, user_id):
     ).fetchone()
 
 
-def find_active_user(con, username):
+def find_user_by_username(con, username):
     return con.execute(
         """SELECT u.*, c.password_hash
            FROM users u
            JOIN user_credentials c ON c.user_id=u.id
-           WHERE u.username=? AND u.active=TRUE""",
+           WHERE u.username=?""",
         (username,),
     ).fetchone()
 
@@ -87,3 +87,7 @@ def postgres_application_ready(con):
            WHERE table_schema='app'"""
     ).fetchall()
     return required <= {row[0] for row in rows}
+
+
+def set_user_active(con, user_id, active):
+    con.execute("UPDATE users SET active=? WHERE id=?", (bool(active), user_id))

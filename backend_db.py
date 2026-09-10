@@ -13,9 +13,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Mapping, Sequence
 
-import psycopg
-from dotenv import load_dotenv
-from psycopg.pq import TransactionStatus
+import sqlite3
+try:
+    import psycopg
+    from psycopg.pq import TransactionStatus
+except ImportError:
+    psycopg = None
+    TransactionStatus = None
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+INTEGRITY_ERRORS = (sqlite3.IntegrityError,) + ((psycopg.IntegrityError,) if psycopg else ())
 
 
 REPOSITORY_ENV_FILE = Path(__file__).resolve().parent / "database" / ".env"
@@ -40,6 +49,8 @@ def load_settings(env_file: str | os.PathLike[str] | None = None) -> DatabaseSet
     path = Path(env_file or os.getenv("PTNT_DB_ENV_FILE", default_env_file()))
     if not path.is_file():
         raise RuntimeError(f"Không tìm thấy cấu hình PostgreSQL: {path}")
+    if load_dotenv is None:
+        raise RuntimeError("PostgreSQL cần python-dotenv. Cài database/requirements.txt.")
     load_dotenv(path, override=False)
     return DatabaseSettings(
         host=os.getenv("PGHOST", "localhost"),
@@ -76,6 +87,8 @@ def hybrid_row(cursor):
 
 
 def connect(*, autocommit: bool = False) -> psycopg.Connection:
+    if psycopg is None:
+        raise RuntimeError("PostgreSQL cần psycopg. Cài database/requirements.txt; SQLite TEST không cần thư viện này.")
     settings = load_settings()
     return psycopg.connect(
         host=settings.host,
@@ -209,6 +222,11 @@ class CompatConnection:
 
     def execute(self, sql: str, params: Sequence | Mapping | None = None) -> CompatCursor:
         translated, identity_table = translate_sql(sql)
+        # Match sqlite3: SELECT alone does not start a transaction; the first
+        # write does. This lets OCOP own its transaction even after page checks.
+        if (self._connection.autocommit and not self.in_transaction
+                and re.match(r"\s*(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\b", translated, re.I)):
+            self._connection.execute("BEGIN")
         cursor = self._connection.execute(translated, params or ())
         lastrowid = None
         buffered_rows = []
@@ -220,7 +238,11 @@ class CompatConnection:
 
     def executemany(self, sql: str, params_seq) -> CompatCursor:
         translated, _ = translate_sql(sql)
-        return CompatCursor(self._connection.executemany(translated, params_seq))
+        if self._connection.autocommit and not self.in_transaction:
+            self._connection.execute("BEGIN")
+        cursor = self._connection.cursor()
+        cursor.executemany(translated, params_seq)
+        return CompatCursor(cursor)
 
     def commit(self):
         return self._connection.commit()
@@ -239,7 +261,7 @@ class CompatConnection:
 
 
 def compat_connect() -> CompatConnection:
-    return CompatConnection(connect())
+    return CompatConnection(connect(autocommit=True))
 
 
 @contextmanager

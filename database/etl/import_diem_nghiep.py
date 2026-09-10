@@ -17,7 +17,11 @@ from openpyxl import load_workbook
 from psycopg.types.json import Jsonb
 from openpyxl.utils import get_column_letter
 
-from mappings import PRODUCTION_METHOD, TIME_CODE, lookup_admin_code
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from database.etl.mappings import TIME_CODE, lookup_admin_code
+from salt_normalization import sync_methods, method_values
 
 
 SHEET_NAME = "21.8-Tuan 34"
@@ -102,17 +106,9 @@ def import_workbook(workbook_path: Path) -> tuple[int, int]:
 
     with psycopg.connect(**connection_kwargs()) as conn:
         with conn.cursor() as cur:
-            temp_codes = [lookup_admin_code(ws_cached.cell(row, 2).value) for row in DATA_ROWS]
-            cur.execute(
-                "DELETE FROM qd5277.DN_SanLuongMuoi "
-                "WHERE Ma_ThoiGian = %s AND Ma_DonViHanhChinh = ANY(%s)",
-                (TIME_CODE, temp_codes),
-            )
-            cur.execute(
-                "DELETE FROM staging.diem_nghiep_2026_w34_raw WHERE source_sheet = %s",
-                (SHEET_NAME,),
-            )
-
+            target_count = 0
+            cur.execute("INSERT INTO qd5277.DM_KhoangThoiGian(Ma_ThoiGian,Nam,Thang) VALUES(%s,2026,8) ON CONFLICT(Ma_ThoiGian) DO NOTHING", (TIME_CODE,))
+            cur.execute("SET LOCAL search_path=qd5277,staging,public")
             for row in DATA_ROWS:
                 raw_values: list[Any] = []
                 kinds: dict[str, dict[str, str]] = {}
@@ -134,28 +130,24 @@ def import_workbook(workbook_path: Path) -> tuple[int, int]:
                     ],
                 )
 
-                dia_ban = ws_cached.cell(row, 2).value
-                cur.execute(
-                    """
-                    INSERT INTO qd5277.DN_SanLuongMuoi
-                        (Ma_SanLuongMuoi, Ma_DonViHanhChinh, Ma_ThoiGian,
-                         PhuongPhapSX, DienTich, SanLuong, GiaBanBinhQuan)
-                    VALUES (%s, %s, %s, %s, %s, %s, NULL)
-                    """,
-                    (
-                        row - 5,
-                        lookup_admin_code(dia_ban),
-                        TIME_CODE,
-                        PRODUCTION_METHOD,
-                        numeric_cached(ws_cached.cell(row, 3).value, row=row, column="C"),
-                        numeric_cached(ws_cached.cell(row, 6).value, row=row, column="F"),
-                    ),
-                )
+                observation = {}
+                for suffix, area_col, harvest_col, price_col in (("land",4,7,20),("tarp",5,8,21)):
+                    for name, col in (("area_",area_col),("harvest_",harvest_col)):
+                        value = ws_cached.cell(row,col).value
+                        raw = ws_formula.cell(row,col).value
+                        if value in (None, "", "-") and not (isinstance(raw,str) and raw.startswith("=")):
+                            value = 0
+                        observation[name + suffix] = numeric_cached(value,row=row,column=get_column_letter(col))
+                    observation["price_" + suffix] = ws_cached.cell(row,price_col).value
+                def execute(query, params):
+                    return cur.execute(query.replace("?", "%s"), params)
+                sync_methods(execute,lookup_admin_code(ws_cached.cell(row,2).value),TIME_CODE,observation,postgres=True)
+                target_count += len(list(method_values(observation)))
         conn.commit()
 
     formulas.close()
     cached.close()
-    return len(DATA_ROWS), len(DATA_ROWS)
+    return len(DATA_ROWS), target_count
 
 
 def main() -> int:

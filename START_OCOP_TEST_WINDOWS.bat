@@ -16,6 +16,11 @@ if not exist "salt_management_TEST.db" (
     pause
     exit /b 1
 )
+"%OCOP_PYTHON%" migrate_roles.py --db "salt_management_TEST.db"
+if errorlevel 1 (
+    pause
+    exit /b 1
+)
 "%OCOP_PYTHON%" migrate_ocop.py --db "salt_management_TEST.db"
 if errorlevel 1 (
     pause

@@ -81,16 +81,13 @@ Kết nối thủ công:
 
 Importer đọc workbook hai lần: `data_only=False` để giữ formula và `data_only=True` để giữ cached calculated value. Staging lưu riêng raw/cached của đủ A:AB và loại giá trị để phân biệt số 0, blank, dấu `-`, formula và date.
 
-Mapping target chỉ gồm:
+Mapping target theo phương pháp (không dùng tổng C/F):
 
-- B -> mã hành chính chính thức
-- kỳ snapshot -> `2026-08`
-- C -> `DienTich`
-- F -> `SanLuong`
-- business rule -> `PhuongPhapSX='Truyền thống'`
-- `GiaBanBinhQuan=NULL`
-
-Các cột còn lại chỉ ở staging và không bị xóa/force-map.
+- B → mã hành chính; kỳ snapshot → `2026-08`.
+- D/G/T → diện tích/sản lượng/giá `Truyền thống`.
+- E/H/U → diện tích/sản lượng/giá `Trải bạt`.
+- Giá đơn rõ ràng được giữ; khoảng giá/giá không rõ → NULL, nguồn vẫn ở staging.
+- Bỏ phương pháp rỗng/toàn 0. UPSERT theo đơn vị/kỳ/phương pháp; không xóa staging.
 
 ## Chạy validation
 
@@ -113,4 +110,23 @@ SELECT COUNT(*) AS records,
 FROM qd5277.DN_SanLuongMuoi;
 ```
 
-Kỳ vọng target: 8 record, diện tích 1953.80, sản lượng 134537.00, tất cả `Truyền thống`, toàn bộ giá bình quân NULL.
+Số dòng target phụ thuộc các phương pháp có dữ liệu (tối đa 16 cho 8 địa bàn). Đối chiếu D/E và G/H riêng; không ép tổng chi tiết bằng cột tổng nếu workbook nguồn có sai lệch.
+
+## Nâng cấp tài khoản và chuyển OCOP
+
+Sau migration 008, áp dụng `sql/009_staff_role.sql` với `psql -v ON_ERROR_STOP=1`.
+Thực hiện trong thời gian bảo trì và sao lưu PostgreSQL trước khi chuyển dữ liệu.
+
+```powershell
+python migration/migrate_sqlite_to_postgres.py --source <nguon_SQLite.db> --dry-run
+python migration/migrate_sqlite_to_postgres.py --source <nguon_SQLite.db>
+```
+
+Nếu đã chuyển dữ liệu và chỉ cần sửa chuẩn hóa muối:
+
+```powershell
+python migration/migrate_sqlite_to_postgres.py --repair-salt-only --dry-run
+python migration/migrate_sqlite_to_postgres.py --repair-salt-only
+```
+
+Xem [báo cáo triển khai và rollback](../UI_ROLE_MIGRATION_REPORT.md).
