@@ -1,189 +1,193 @@
-"""Idempotently migrate the legacy website SQLite data into PostgreSQL."""
+"""Copy SQLite to PostgreSQL during maintenance, after SQL 002,004..009.
 
+Read-only source; atomic target transaction; preserve IDs and refuse collisions.
+Back up the target first. No official OCOP results are created or copied here.
+"""
 from __future__ import annotations
-
 import argparse
-import os
-import sqlite3
 from pathlib import Path
+import sqlite3
+import sys
 
-import psycopg
-from dotenv import load_dotenv
-from psycopg.rows import dict_row
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from backend_db import connect, CompatConnection
+from salt_normalization import sync_methods
 
-
-DB_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_SOURCE = DB_DIR.parent / "salt_management.db"
-ADMIN_UNITS = {
-    "xã an thới đông": ("Xã An Thới Đông", "27673"),
-    "xã an thời đông": ("Xã An Thới Đông", "27673"),
-    "xã thạnh an": ("Xã Thạnh An", "27676"),
-    "xã cần giờ": ("Xã Cần Giờ", "27664"),
-    "xã long điền": ("Xã Long Điền", "26659"),
-    "xã long sơn": ("Xã Long Sơn", "26545"),
-    "phường phước thắng": ("Phường Phước Thắng", "26542"),
-    "phường long hương": ("Phường Long Hương", "26566"),
-    "phường bà rịa": ("Phường Bà Rịa", "26560"),
-}
-
-
-def canonical_unit(value):
-    return ADMIN_UNITS.get(str(value or "").strip().casefold())
-
-
-def pg_connect():
-    load_dotenv(DB_DIR / ".env", override=False)
-    return psycopg.connect(
-        host=os.getenv("PGHOST", "localhost"),
-        port=int(os.getenv("PGPORT", "5432")),
-        dbname=os.getenv("PGDATABASE", "ptnt_qd5277_dev"),
-        user=os.getenv("PGUSER", "postgres"),
-        password=os.getenv("PGPASSWORD") or None,
-        row_factory=dict_row,
-        options="-c search_path=app,qd5277,staging,public",
-        application_name="ptnt_sqlite_migration",
-    )
+DEFAULT_SOURCE = ROOT / 'salt_management.db'
+# Dependency order, primary key, and identity fields used to reject ID collisions.
+TABLES = (
+    ('DM_DonViHanhChinh', 'qd5277', 'Ma_DonViHanhChinh', ()),
+    ('DM_KhoangThoiGian', 'qd5277', 'Ma_ThoiGian', ()),
+    ('users', 'app', 'id', ('username',)),
+    ('DM_SanPham', 'qd5277', 'Ma_SanPham', ()),
+    ('DM_CoSo', 'qd5277', 'Ma_CoSo', ()),
+    ('user_admin_units', 'app', 'user_id', ()),
+    ('ocop_criteria_sets', 'app', 'id', ('code',)),
+    ('ocop_criteria', 'app', 'id', ('criteria_set_id', 'code')),
+    ('ocop_criteria_options', 'app', 'id', ('criterion_id',)),
+    ('ocop_entities', 'app', 'id', ('ma_co_so',)),
+    ('ocop_products', 'app', 'id', ('ma_san_pham',)),
+    ('ocop_applications', 'app', 'id', ('product_id', 'created_by')),
+    ('ocop_reviews', 'app', 'id', ('application_id', 'reviewer_id')),
+    ('records', 'app', 'id', ('unit_name', 'report_date')),
+    ('audit_logs', 'app', 'id', ('record_id', 'user_id', 'module', 'object_id')),
+)
 
 
-def source_rows(source, table):
-    return [dict(row) for row in source.execute(f'SELECT * FROM "{table}" ORDER BY id')]
+def source_snapshot(path):
+    con = sqlite3.connect(Path(path).resolve(strict=True).as_uri() + '?mode=ro', uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        con.execute('BEGIN')
+        if con.execute('PRAGMA foreign_key_check').fetchall():
+            raise RuntimeError('SQLite source has foreign-key errors; no target changes made.')
+        names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        return {name: [dict(r) for r in con.execute(f'SELECT * FROM "{name}"')]
+                for name, _, _, _ in TABLES if name in names}
+    finally:
+        con.close()
+
+
+def parent_first(rows, key, parent):
+    remaining = {r[key]: r for r in rows}
+    result = []
+    while remaining:
+        ready = [r for r in remaining.values() if r.get(parent) not in remaining]
+        if not ready:
+            raise RuntimeError(f'Cycle in source {parent} tree.')
+        for row in ready:
+            result.append(row)
+            del remaining[row[key]]
+    return result
 
 
 def reset_identity(target, table):
-    target.execute(
-        f"""SELECT setval(
-            pg_get_serial_sequence('app.{table}', 'id'),
-            COALESCE((SELECT MAX(id) + 1 FROM app.{table}), 1),
-            FALSE)"""
-    )
+    """Use transactional ALTER SEQUENCE, without rewinding an existing counter."""
+    from psycopg import sql
+    sequence = target.execute('SELECT pg_get_serial_sequence(%s,%s)', ('app.' + table, 'id')).fetchone()[0]
+    if not sequence:
+        return
+    last = target.execute(sql.SQL('SELECT last_value FROM {}').format(sql.Identifier(*sequence.split('.')))).fetchone()[0]
+    maximum = target.execute(sql.SQL('SELECT COALESCE(MAX(id),0) FROM app.{}').format(sql.Identifier(table))).fetchone()[0]
+    target.execute(sql.SQL('ALTER SEQUENCE {} RESTART WITH {}').format(
+        sql.Identifier(*sequence.split('.')), sql.Literal(max(last, maximum) + 1)))
 
 
-def migrate(source_path):
-    source = sqlite3.connect(source_path)
-    source.row_factory = sqlite3.Row
-    users = source_rows(source, "users")
-    records = source_rows(source, "records")
-    audits = source_rows(source, "audit_logs")
-    source.close()
-
-    with pg_connect() as target:
-        for row in users:
-            canonical = canonical_unit(row["unit_name"])
-            unit_name = canonical[0] if canonical else row["unit_name"]
-            target.execute(
-                """INSERT INTO app.users(id,username,role,unit_name,active,created_at)
-                   VALUES(%s,%s,%s,%s,%s,%s)
-                   ON CONFLICT(id) DO UPDATE SET
-                     username=excluded.username, role=excluded.role,
-                     unit_name=excluded.unit_name, active=excluded.active""",
-                (row["id"], row["username"], row["role"], unit_name,
-                 bool(row["active"]), row["created_at"]),
-            )
-            target.execute(
-                """INSERT INTO app.user_credentials(user_id,password_hash)
-                   VALUES(%s,%s)
-                   ON CONFLICT(user_id) DO UPDATE SET password_hash=excluded.password_hash""",
-                (row["id"], row["password_hash"]),
-            )
-            if row["role"] == "unit" and canonical:
-                target.execute(
-                    """INSERT INTO app.user_admin_units(user_id,ma_don_vi_hanh_chinh)
-                       VALUES(%s,%s)
-                       ON CONFLICT(user_id) DO UPDATE SET
-                         ma_don_vi_hanh_chinh=excluded.ma_don_vi_hanh_chinh""",
-                    (row["id"], canonical[1]),
-                )
-
-        record_columns = (
-            "id", "report_date", "reporting_mode", "unit_name", "ma_don_vi_hanh_chinh",
-            "created_by", "area_land", "area_tarp", "harvest_land", "harvest_tarp",
-            "sold_land", "sold_tarp", "remaining_land", "remaining_tarp",
-            "processed_fine", "processed_iodized", "households", "workers",
-            "price_land", "price_tarp", "damage_land", "damage_tarp", "status",
-            "note", "reviewer_note", "created_at", "updated_at", "submitted_at", "approved_at",
-        )
-        for row in records:
-            canonical = canonical_unit(row["unit_name"])
+def copy_table(target, name, schema, key, identity, rows):
+    from psycopg import sql
+    columns = {r[0]: r[1] for r in target.execute(
+        'SELECT column_name,data_type FROM information_schema.columns WHERE table_schema=%s AND table_name=%s',
+        (schema, name.lower()))}
+    if not columns:
+        raise RuntimeError(f'Missing target {schema}.{name}; apply schema migrations first.')
+    table = sql.Identifier(schema, name.lower())
+    for raw in rows:
+        row = {k.lower(): v for k, v in raw.items()}
+        if name == 'users':
+            password = row.pop('password_hash')
+            from server import canonical_admin_unit
+            canonical = canonical_admin_unit(row.get('unit_name'))
+            if canonical and row['role'] == 'unit':
+                row['unit_name'] = canonical[0]
+        if name == 'records':
+            from server import canonical_admin_unit
+            canonical = canonical_admin_unit(row['unit_name'])
             if not canonical:
-                raise RuntimeError(f"Báo cáo dùng đơn vị chưa có mã chính thức: {row['unit_name']}")
-            values = {
-                **row,
-                "reporting_mode": "cumulative",
-                "unit_name": canonical[0],
-                "ma_don_vi_hanh_chinh": canonical[1],
-            }
-            placeholders = ",".join(["%s"] * len(record_columns))
-            updates = ",".join(
-                f"{column}=excluded.{column}" for column in record_columns if column != "id"
-            )
-            target.execute(
-                f"""INSERT INTO app.records({','.join(record_columns)})
-                    VALUES({placeholders})
-                    ON CONFLICT(id) DO UPDATE SET {updates}""",
-                tuple(values.get(column) for column in record_columns),
-            )
+                raise RuntimeError('Unknown administrative unit in report: ' + row['unit_name'])
+            row.update(unit_name=canonical[0], ma_don_vi_hanh_chinh=canonical[1])
+            row.setdefault('reporting_mode', 'cumulative')
+        unknown = set(row) - set(columns)
+        if unknown:
+            raise RuntimeError(f'Unmapped source columns in {name}: {sorted(unknown)}')
+        for col, value in list(row.items()):
+            if columns[col] == 'boolean' and value is not None:
+                if value not in (0, 1, False, True):
+                    raise RuntimeError(f'Invalid boolean {name}.{col}')
+                row[col] = bool(value)
+        existing = target.execute(sql.SQL('SELECT * FROM {} WHERE {}=%s').format(table, sql.Identifier(key.lower())), (row[key.lower()],)).fetchone()
+        if existing:
+            for col in identity:
+                before, after = existing[col], row.get(col)
+                if str(before if before is not None else '') != str(after if after is not None else ''):
+                    raise RuntimeError(f'ID collision in {name}: {row[key.lower()]}; target identity differs.')
+        names = list(row)
+        updates = [c for c in names if c != key.lower()]
+        target.execute(sql.SQL('INSERT INTO {} ({}) VALUES ({}) ON CONFLICT ({}) DO UPDATE SET {}').format(
+            table, sql.SQL(',').join(map(sql.Identifier, names)),
+            sql.SQL(',').join(sql.Placeholder() for _ in names), sql.Identifier(key.lower()),
+            sql.SQL(',').join(sql.SQL('{}=excluded.{}').format(sql.Identifier(c),sql.Identifier(c)) for c in updates)), tuple(row.values()))
+        if name == 'users':
+            target.execute('INSERT INTO app.user_credentials(user_id,password_hash) VALUES(%s,%s) ON CONFLICT(user_id) DO UPDATE SET password_hash=excluded.password_hash', (row['id'], password))
 
-        for row in audits:
-            target.execute(
-                """INSERT INTO app.audit_logs
-                   (id,record_id,user_id,action,detail,created_at)
-                   VALUES(%s,%s,%s,%s,%s,%s)
-                   ON CONFLICT(id) DO UPDATE SET
-                     record_id=excluded.record_id, user_id=excluded.user_id,
-                     action=excluded.action, detail=excluded.detail,
-                     created_at=excluded.created_at""",
-                tuple(row[column] for column in
-                      ("id", "record_id", "user_id", "action", "detail", "created_at")),
-            )
 
-        for table in ("users", "records", "audit_logs"):
-            reset_identity(target, table)
+def repair_salt(target):
+    """Only repair periods backed by an approved cumulative source report."""
+    con = CompatConnection(target)
+    rows = target.execute("""SELECT DISTINCT ON (ma_don_vi_hanh_chinh, date_trunc('month',report_date)) *
+        FROM app.records WHERE status='approved' AND reporting_mode='cumulative'
+          AND ma_don_vi_hanh_chinh IS NOT NULL
+        ORDER BY ma_don_vi_hanh_chinh,date_trunc('month',report_date),report_date DESC,id DESC""").fetchall()
+    for row in rows:
+        day = row['report_date']
+        code = day.strftime('%Y-%m')
+        con.execute('INSERT INTO DM_KhoangThoiGian(Ma_ThoiGian,Nam,Thang) VALUES(?,?,?) ON CONFLICT(Ma_ThoiGian) DO NOTHING', (code,day.year,day.month))
+        sync_methods(con.execute, row['ma_don_vi_hanh_chinh'], code, row, postgres=True)
+    return len(rows)
 
-        target.execute(
-            """INSERT INTO qd5277.DM_KhoangThoiGian(Ma_ThoiGian,Nam,Thang,VuMua)
-               SELECT DISTINCT to_char(report_date,'YYYY-MM'),
-                      EXTRACT(YEAR FROM report_date)::INTEGER,
-                      EXTRACT(MONTH FROM report_date)::INTEGER, NULL
-               FROM app.records WHERE status='approved' AND reporting_mode='cumulative'
-               ON CONFLICT(Ma_ThoiGian) DO NOTHING"""
-        )
-        target.execute(
-            """WITH latest AS (
-                   SELECT r.*,
-                          row_number() OVER (
-                            PARTITION BY ma_don_vi_hanh_chinh, date_trunc('month',report_date)
-                            ORDER BY report_date DESC,id DESC) AS position
-                   FROM app.records r
-                   WHERE status='approved' AND reporting_mode='cumulative'
-                     AND ma_don_vi_hanh_chinh IS NOT NULL
-               )
-               INSERT INTO qd5277.DN_SanLuongMuoi
-                   (Ma_DonViHanhChinh,Ma_ThoiGian,PhuongPhapSX,DienTich,SanLuong,GiaBanBinhQuan)
-               SELECT ma_don_vi_hanh_chinh, to_char(report_date,'YYYY-MM'), 'Truyền thống',
-                      area_land + area_tarp, harvest_land + harvest_tarp, NULL
-               FROM latest WHERE position=1
-               ON CONFLICT(Ma_DonViHanhChinh,Ma_ThoiGian,PhuongPhapSX) DO UPDATE SET
-                   DienTich=excluded.DienTich,
-                   SanLuong=excluded.SanLuong,
-                   GiaBanBinhQuan=NULL"""
-        )
-        target.execute(
-            """INSERT INTO app.schema_migrations(version)
-               VALUES('app_004_sqlite_data') ON CONFLICT(version) DO NOTHING"""
-        )
 
-    return {"users": len(users), "records": len(records), "audit_logs": len(audits)}
+def migrate(source_path, *, target=None, dry_run=False):
+    snapshot = source_snapshot(source_path)
+    own = target is None
+    target = target or connect()
+    try:
+        with target.transaction(force_rollback=dry_run):
+            target.execute('SELECT pg_advisory_xact_lock(5277009)')
+            for name, schema, _, _ in TABLES:
+                if name in snapshot:
+                    target.execute(f'LOCK TABLE {schema}.{name} IN SHARE ROW EXCLUSIVE MODE')
+            for name, schema, key, identity in TABLES:
+                if name not in snapshot:
+                    continue
+                rows = snapshot[name]
+                if name == 'DM_DonViHanhChinh':
+                    rows = parent_first(rows,key,'Ma_DonViCapTren')
+                if name == 'ocop_criteria':
+                    rows = parent_first(rows,key,'parent_id')
+                copy_table(target,name,schema,key,identity,rows)
+            if 'user_admin_units' not in snapshot:
+                from server import canonical_admin_unit
+                for row in snapshot.get('users', []):
+                    unit = canonical_admin_unit(row.get('unit_name'))
+                    if row['role'] == 'unit' and unit:
+                        target.execute('INSERT INTO app.user_admin_units VALUES(%s,%s) ON CONFLICT(user_id) DO NOTHING', (row['id'],unit[1]))
+            repair_salt(target)
+            for name,schema,key,_ in TABLES:
+                if name in snapshot and schema == 'app' and key == 'id':
+                    reset_identity(target,name)
+            target.execute("INSERT INTO app.schema_migrations(version) VALUES('app_008_sqlite_ocop_data') ON CONFLICT(version) DO NOTHING")
+        return {name:len(rows) for name,rows in snapshot.items()}
+    finally:
+        if own:
+            target.close()
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
+    parser.add_argument('--source', type=Path, default=DEFAULT_SOURCE)
+    parser.add_argument('--dry-run', action='store_true', help='Execute validation then roll back the transaction.')
+    parser.add_argument('--repair-salt-only', action='store_true', help='Repair from PostgreSQL records; do not read SQLite.')
     args = parser.parse_args()
-    if not args.source.is_file():
-        parser.error(f"Không tìm thấy SQLite nguồn: {args.source}")
-    counts = migrate(args.source)
-    print("Migration hoàn tất: " + ", ".join(f"{key}={value}" for key, value in counts.items()))
+    if args.repair_salt_only:
+        with connect() as target:
+            with target.transaction(force_rollback=args.dry_run):
+                target.execute('LOCK TABLE app.records, qd5277.DN_SanLuongMuoi IN SHARE ROW EXCLUSIVE MODE')
+                print('Periods:', repair_salt(target))
+    else:
+        print(migrate(args.source, dry_run=args.dry_run))
+    print('Rolled back (dry run).' if args.dry_run else 'Committed. PTNT_OCOP was not modified.')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

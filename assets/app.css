@@ -233,3 +233,22 @@ body.sidebar-collapsed{--sidebar-width:78px}
 .ocop-page .ocop-criteria-options li:last-child{border-bottom:0}
 .ocop-page .ocop-criteria-options strong{white-space:nowrap;color:#354258}
 @media(max-width:620px){.ocop-page .ocop-criteria-node-head,.ocop-page .ocop-criteria-options li{flex-direction:column;gap:6px}.ocop-page .ocop-criteria-node-head>strong{white-space:normal}}
+
+/* Expandable business groups; both can stay open. Native details supports keyboard. */
+.sidebar-group{margin-top:16px}
+.sidebar-group summary{display:flex;align-items:center;justify-content:space-between;gap:8px;cursor:pointer;padding:12px 15px;color:#fff;font-size:13px;font-weight:750;list-style:none;border-radius:8px}
+.sidebar-group summary::-webkit-details-marker{display:none}
+.sidebar-group summary:hover{background:#ffffff16}
+.sidebar-group summary:focus-visible{outline:2px solid #fff;outline-offset:-2px}
+.group-chevron{width:17px;height:17px;transition:transform .15s ease}
+.sidebar-group[open] .group-chevron{transform:rotate(180deg)}
+.sidebar-footer{text-align:center}
+.sidebar-footer-line{margin-left:auto;margin-right:auto}
+.sidebar-footer strong{display:block;font-size:12px;line-height:1.45;letter-spacing:0;text-align:center}
+.sidebar-footer strong span{display:block;white-space:nowrap}
+.sidebar-footer p{margin-left:auto;margin-right:auto}
+@media(min-width:901px){
+ .sidebar-collapsed .sidebar-group summary{padding:12px 4px;justify-content:center;font-size:10px;flex-wrap:wrap;gap:3px}
+ .sidebar-collapsed .sidebar-group .group-label{line-height:1.3;text-align:center}
+}
+@media(prefers-reduced-motion:reduce){.group-chevron{transition:none}}

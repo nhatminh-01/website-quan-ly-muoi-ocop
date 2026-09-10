@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, quote, urlencode
 import re
 
 import ocop_services as svc
+from permissions import is_chi_cuc_user
 
 
 STATUS_LABELS = {
@@ -111,7 +112,7 @@ class _Pages:
         self.session = session
         self.con = con
         self.filters = filters
-        self.admin = session.get("role") == "admin"
+        self.admin = is_chi_cuc_user(session)
         self.scope = svc.get_scope(con, session)
         self.escape = helpers.get("esc") or (lambda value: escape(str(value or ""), quote=True))
         self.csrf = helpers["csrf_input"](session)

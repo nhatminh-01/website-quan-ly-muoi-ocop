@@ -2,6 +2,19 @@
 
 Tài liệu này ghi lại các thay đổi đáng chú ý của hệ thống Quản lý muối – OCOP.
 
+## 2026-09-10 — Sidebar, chuyên viên và migration dữ liệu
+
+- Sidebar Diêm nghiệp/OCOP mở đóng độc lập, tự mở nhóm route đang dùng; footer hai dòng căn giữa.
+- Vai trò `staff` có quyền nghiệp vụ toàn Chi cục; quản lý tài khoản và phân địa bàn chỉ dành cho `admin`.
+- Kích hoạt/ngưng kích hoạt giữ nguyên tài khoản và dữ liệu, thu hồi các phiên hiện có.
+- Đăng nhập chỉ thông báo tài khoản ngưng hoạt động khi mật khẩu đúng.
+- Tách chuẩn hóa muối đất (`Truyền thống`) và trải bạt (`Trải bạt`); dùng chung mapping cho web, migration và ETL.
+- Giá đơn rõ ràng được lưu riêng; khoảng giá/giá không rõ giữ ở nguồn, PostgreSQL lưu NULL. SQLite giữ 0 theo ràng buộc NOT NULL hiện có, không hiểu là giá thực bằng 0.
+- Migration SQLite → PostgreSQL bổ sung danh mục, OCOP 2, audit metadata, kiểm tra trùng ID, rollback và dry-run. Không ghi PTNT_OCOP.
+- Thêm `009_staff_role.sql` và `migrate_roles.py` (SQLite sao lưu trước khi đổi CHECK).
+- SQLite TEST không cần psycopg/python-dotenv; kiểm thử PostgreSQL dùng database tạm riêng.
+- Chi tiết chạy, rollback và kiểm thử: [UI_ROLE_MIGRATION_REPORT.md](UI_ROLE_MIGRATION_REPORT.md).
+
 ## 2026-09-09 — Chuyển backend từ SQLite sang PostgreSQL
 
 ### Tổng quan
