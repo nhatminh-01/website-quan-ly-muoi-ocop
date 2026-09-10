@@ -11,6 +11,7 @@ import importlib.util
 from pathlib import Path
 import sqlite3
 import unittest
+from migrate_weekly import SCHEMA as WEEKLY_SCHEMA
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,7 +84,7 @@ def legacy_ddl():
             and isinstance(node.args[0].value, str)
             and "CREATE TABLE IF NOT EXISTS users" in node.args[0].value
         ):
-            return node.args[0].value
+            return node.args[0].value + WEEKLY_SCHEMA
     raise AssertionError("init_db must expose its legacy CREATE TABLE SQL as a literal.")
 
 

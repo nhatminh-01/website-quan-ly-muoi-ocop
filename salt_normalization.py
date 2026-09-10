@@ -42,12 +42,10 @@ def method_values(record):
             raise ValueError("Diện tích/sản lượng phải là số hữu hạn không âm.")
         foundation_area += area_value
         foundation_production += production_value
-    # Excel has official total columns C/F. app.records has no stored total, so
-    # its standard projection is calculated from the two foundation details.
-    area = Decimal(str(record["area_total"])) if record.get("area_total") is not None else foundation_area
-    production = Decimal(str(record["harvest_total"])) if record.get("harvest_total") is not None else foundation_production
-    if not area.is_finite() or not production.is_finite() or area < 0 or production < 0:
-        raise ValueError("Tổng diện tích/sản lượng phải là số hữu hạn không âm.")
+    # Always rebuild from the separate details, never add an existing normalized
+    # row or substitute Excel C/F totals (which can disagree with D/E and G/H).
+    area = foundation_area
+    production = foundation_production
     if area or production:
         # Source prices describe each foundation separately and can be ranges.
         # QD 5277 has only one average-price field, so do not invent an average.

@@ -130,10 +130,8 @@ def import_workbook(workbook_path: Path) -> tuple[int, int]:
                     ],
                 )
 
-                observation = {
-                    "area_total": numeric_cached(ws_cached.cell(row,3).value,row=row,column="C"),
-                    "harvest_total": numeric_cached(ws_cached.cell(row,6).value,row=row,column="F"),
-                }
+                # Preserve C/F in staging; standard totals come from D+E / G+H.
+                observation = {}
                 for suffix, area_col, harvest_col, price_col in (("land",4,7,20),("tarp",5,8,21)):
                     for name, col in (("area_",area_col),("harvest_",harvest_col)):
                         value = ws_cached.cell(row,col).value
