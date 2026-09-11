@@ -31,7 +31,7 @@ trong khi staging vẫn giữ nguyên giá trị nguồn để truy vết.
 cd <thu-muc-repo>\database
 py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-Copy-Item config\.env.example .env
+Copy-Item .env.example .env
 ```
 
 Điền `PGPASSWORD` trong `.env`; không commit tệp này.
@@ -62,11 +62,8 @@ Stop-Service -Name 'postgresql-x64-17'
 & 'C:\Program Files\PostgreSQL\17\bin\psql.exe' -v ON_ERROR_STOP=1 -h localhost -p 5432 -U postgres -d ptnt_qd5277_dev -f sql\011_weekly_foundation.sql
 ```
 
-Migration dữ liệu website SQLite cũ (chạy lặp an toàn):
-
-```powershell
-.\.venv\Scripts\python.exe migration\migrate_sqlite_to_postgres.py
-```
+Sau khi hoàn tất schema, máy chủ có thể tạo role dùng chung cho nhóm bằng
+`sql\team_role_setup.sql`. Xem [hướng dẫn kết nối nhóm](../POSTGRESQL_TEAM_GUIDE.md).
 
 Kết nối thủ công:
 
@@ -126,21 +123,7 @@ raw C/F không bị sửa khi nguồn có sai lệch, target luôn lấy D+E và
 - Dashboard đọc dữ liệu có hiệu lực, không đọc lần upload bị skip. So sánh với tuần có dữ liệu gần nhất trước đó, không so hai batch cùng tuần.
 - Migration 011 bổ sung tổng tiêu thụ/tồn kho từ raw của batch đang có hiệu lực; chạy lại không ghi đè các giá trị đã lưu. View chuẩn tuần lấy D+E / G+H, một dòng `Truyền thống` cho mỗi xã/tuần.
 
-## Nâng cấp tài khoản và chuyển OCOP
+## Nâng cấp tài khoản và OCOP
 
 Sau migration 008, áp dụng `sql/009_staff_role.sql` với `psql -v ON_ERROR_STOP=1`.
-Thực hiện trong thời gian bảo trì và sao lưu PostgreSQL trước khi chuyển dữ liệu.
-
-```powershell
-python migration/migrate_sqlite_to_postgres.py --source <nguon_SQLite.db> --dry-run
-python migration/migrate_sqlite_to_postgres.py --source <nguon_SQLite.db>
-```
-
-Nếu đã chuyển dữ liệu và chỉ cần sửa chuẩn hóa muối:
-
-```powershell
-python migration/migrate_sqlite_to_postgres.py --repair-salt-only --dry-run
-python migration/migrate_sqlite_to_postgres.py --repair-salt-only
-```
-
-Xem [báo cáo triển khai và rollback](../UI_ROLE_MIGRATION_REPORT.md).
+Thực hiện trong thời gian bảo trì và sao lưu PostgreSQL trước khi chạy migration.

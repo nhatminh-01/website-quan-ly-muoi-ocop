@@ -2,6 +2,15 @@
 
 Tài liệu này ghi lại các thay đổi đáng chú ý của hệ thống Quản lý muối – OCOP.
 
+## Chưa phát hành — PostgreSQL dùng chung cho nhóm
+
+- PostgreSQL trở thành backend duy nhất; loại bỏ nhánh runtime, launcher, migration, test và database nhúng SQLite khỏi repository.
+- Loại bỏ 5 file database từng được Git theo dõi và thêm quy tắc chặn `*.db`, `*.db-wal`, `*.db-shm`.
+- Thêm `POSTGRESQL_TEAM_GUIDE.md` hướng dẫn thành viên thứ hai cài dependency và kết nối máy chủ `192.168.1.41`.
+- Thêm role dùng chung `ptnt_team`, có quyền sở hữu database/schema/object của riêng dự án nhưng không có quyền superuser toàn cụm PostgreSQL.
+- Chuyển GitHub Actions sang PostgreSQL 17 duy nhất và dùng database tạm cho kiểm thử tích hợp.
+- Cấu hình cục bộ chỉ đọc `database/.env`; không còn fallback sang cấu hình hoặc database ngoài repository.
+
 ## Chưa phát hành — Đồng bộ quy tắc nền sản xuất muối
 
 - Thêm luồng import báo cáo tuần hai bước: xem trước/validation rồi mới xác nhận ghi dữ liệu.
@@ -32,7 +41,6 @@ Tài liệu này ghi lại các thay đổi đáng chú ý của hệ thống Qu
 - Migration SQLite → PostgreSQL bổ sung danh mục, OCOP 2, audit metadata, kiểm tra trùng ID, rollback và dry-run. Không ghi PTNT_OCOP.
 - Thêm `009_staff_role.sql` và `migrate_roles.py` (SQLite sao lưu trước khi đổi CHECK).
 - SQLite TEST không cần psycopg/python-dotenv; kiểm thử PostgreSQL dùng database tạm riêng.
-- Chi tiết chạy, rollback và kiểm thử: [UI_ROLE_MIGRATION_REPORT.md](UI_ROLE_MIGRATION_REPORT.md).
 
 ## 2026-09-09 — Chuyển backend từ SQLite sang PostgreSQL
 

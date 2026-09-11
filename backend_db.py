@@ -13,27 +13,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator, Mapping, Sequence
 
-import sqlite3
-try:
-    import psycopg
-    from psycopg.pq import TransactionStatus
-except ImportError:
-    psycopg = None
-    TransactionStatus = None
-try:
-    from dotenv import load_dotenv
-except ImportError:
-    load_dotenv = None
-INTEGRITY_ERRORS = (sqlite3.IntegrityError,) + ((psycopg.IntegrityError,) if psycopg else ())
+import psycopg
+from psycopg.pq import TransactionStatus
+from dotenv import load_dotenv
+
+INTEGRITY_ERRORS = (psycopg.IntegrityError,)
 
 
 REPOSITORY_ENV_FILE = Path(__file__).resolve().parent / "database" / ".env"
-LEGACY_ENV_FILE = Path(__file__).resolve().parent.parent / "DB" / ".env"
 
 
 def default_env_file() -> Path:
-    """Prefer portable repository config, with the original local path as fallback."""
-    return REPOSITORY_ENV_FILE if REPOSITORY_ENV_FILE.is_file() else LEGACY_ENV_FILE
+    """Use the untracked PostgreSQL configuration stored inside this checkout."""
+    return REPOSITORY_ENV_FILE
 
 
 @dataclass(frozen=True)
@@ -62,7 +54,7 @@ def load_settings(env_file: str | os.PathLike[str] | None = None) -> DatabaseSet
 
 
 class HybridRow(dict):
-    """Mapping row compatible with the two sqlite3.Row access styles in the app."""
+    """Case-insensitive PostgreSQL row supporting name and numeric lookup."""
 
     def __init__(self, columns: Sequence[str], values: Sequence[object]):
         super().__init__(zip(columns, values))
@@ -87,8 +79,6 @@ def hybrid_row(cursor):
 
 
 def connect(*, autocommit: bool = False) -> psycopg.Connection:
-    if psycopg is None:
-        raise RuntimeError("PostgreSQL cần psycopg. Cài database/requirements.txt; SQLite TEST không cần thư viện này.")
     settings = load_settings()
     return psycopg.connect(
         host=settings.host,
@@ -120,7 +110,7 @@ _IDENTITY_TABLES = {
 
 
 def _translate_placeholders(sql: str) -> str:
-    """Translate SQLite placeholders while leaving quoted SQL text untouched."""
+    """Translate the handlers' compact placeholders to psycopg syntax."""
     result: list[str] = []
     i = 0
     quote: str | None = None
@@ -157,28 +147,10 @@ def _translate_placeholders(sql: str) -> str:
 def translate_sql(sql: str) -> tuple[str, str | None]:
     """Return PostgreSQL SQL and the inserted identity table, when applicable."""
     translated = _translate_placeholders(sql)
-    translated = re.sub(r"\bBEGIN\s+IMMEDIATE\b", "BEGIN", translated, flags=re.I)
-    translated = re.sub(r"\bCOLLATE\s+BINARY\b", "", translated, flags=re.I)
-    translated = re.sub(
-        r"\b(active|TinhTrang)\s*=\s*1\b",
-        lambda match: f"{match.group(1)}=TRUE",
-        translated,
-        flags=re.I,
-    )
-    translated = re.sub(
-        r"\b(active|TinhTrang)\s*=\s*0\b",
-        lambda match: f"{match.group(1)}=FALSE",
-        translated,
-        flags=re.I,
-    )
-    translated = re.sub(r"\bINSERT\s+OR\s+IGNORE\s+INTO\b", "INSERT INTO", translated, flags=re.I)
-    translated = re.sub(r"\bIS\s+NOT\s+%s\b", "IS DISTINCT FROM %s", translated, flags=re.I)
 
     insert = re.match(r"\s*INSERT\s+INTO\s+(?:[A-Za-z_][\w]*\.)?([A-Za-z_][\w]*)", translated, re.I)
     table = insert.group(1).casefold() if insert else None
     identity_table = table if table in _IDENTITY_TABLES else None
-    if "INSERT OR IGNORE" in sql.upper() and "ON CONFLICT" not in translated.upper():
-        translated = translated.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
     if identity_table and "RETURNING" not in translated.upper():
         translated = translated.rstrip().rstrip(";") + " RETURNING id"
     return translated, identity_table
@@ -213,7 +185,7 @@ class CompatCursor:
 
 
 class CompatConnection:
-    """Small sqlite3-like boundary used while preserving existing HTTP handlers."""
+    """Small PostgreSQL adapter used by the existing HTTP handlers."""
 
     def __init__(self, connection: psycopg.Connection):
         self._connection = connection
@@ -224,8 +196,7 @@ class CompatConnection:
 
     def execute(self, sql: str, params: Sequence | Mapping | None = None) -> CompatCursor:
         translated, identity_table = translate_sql(sql)
-        # Match sqlite3: SELECT alone does not start a transaction; the first
-        # write does. This lets OCOP own its transaction even after page checks.
+        # Keep reads in autocommit; start an explicit transaction on first write.
         if (self._connection.autocommit and not self.in_transaction
                 and re.match(r"\s*(INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE)\b", translated, re.I)):
             self._connection.execute("BEGIN")

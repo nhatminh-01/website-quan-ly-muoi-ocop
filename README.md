@@ -1,35 +1,23 @@
 # Website nội bộ quản lý số liệu sản xuất muối
 
-Bản nâng cấp sidebar, chuyên viên và migration: [hướng dẫn triển khai](UI_ROLE_MIGRATION_REPORT.md).
+Hệ thống dùng PostgreSQL làm backend duy nhất. Dữ liệu nghiệp vụ nằm trên một máy chủ
+PostgreSQL dùng chung; repository không chứa database nhúng hoặc bản sao dữ liệu vận hành.
 
-Lịch sử thay đổi hệ thống: [CHANGELOG.md](CHANGELOG.md).
+- Thành viên thứ hai làm theo [hướng dẫn kết nối PostgreSQL dùng chung](POSTGRESQL_TEAM_GUIDE.md).
+- DDL, migration, ETL và validation nằm trong thư mục `database`.
+- Lịch sử thay đổi nằm tại [CHANGELOG.md](CHANGELOG.md).
 
-## OCOP giai đoạn 2 — bản kiểm thử
+## OCOP giai đoạn 2
 
-Đã bổ sung nền tảng giai đoạn 1 (chủ thể, sản phẩm, hồ sơ, phân quyền) và giai đoạn 2:
-**26 bộ tiêu chí OCOP dạng dữ liệu động** theo Quyết định 26/2026/QĐ-TTg, liên kết bộ tiêu chí
-với sản phẩm/hồ sơ và giao diện tra cứu `/ocop/criteria`. Chi tiết: [OCOP2_REPORT.md](OCOP2_REPORT.md).
-Báo cáo giai đoạn trước vẫn lưu tại [OCOP1_REPORT.md](OCOP1_REPORT.md).
-
-**Mở `START_OCOP_TEST_WINDOWS.bat`**, sau đó truy cập **http://127.0.0.1:8081/ocop**.
-Tệp chạy này dùng riêng `salt_management_TEST.db`, tự chạy lần lượt
-`migrate_roles.py`, `migrate_ocop.py`, `migrate_weekly.py`, rồi mở server.
-Các migration chạy lại an toàn; không chạy lại chuẩn hóa muối khi khởi động TEST.
-Tài khoản là các tài khoản trong bản test.
-Nếu máy chưa có Python trên PATH, tệp chạy sẽ thử Python có sẵn trong bộ công cụ Codex.
-
-Nếu chưa có database test, tạo bản sao một lần bằng `python prepare_ocop_test.py`.
-Lệnh này chỉ đọc database chính, không ghi đè database test đã tồn tại.
-
-`START_WINDOWS.bat` chạy hệ thống Diêm nghiệp với PostgreSQL mặc định. Cấu hình mẫu,
-DDL, migration, ETL và validation nằm trong thư mục `database` của repository.
+Hệ thống có nền tảng chủ thể, sản phẩm, hồ sơ, phân quyền và 26 bộ tiêu chí OCOP dạng dữ liệu
+động theo Quyết định 26/2026/QĐ-TTg. Giao diện tra cứu nằm tại `/ocop/criteria`.
 
 OCOP giai đoạn 2 chưa có chấm điểm Hội đồng, chứng nhận, đồng bộ kết quả chính thức hoặc upload minh chứng.
 Giai đoạn 2 mới nạp 26 bộ sản phẩm và khung A/B/C (40/25/35); tiêu chí con và lựa chọn điểm sẽ được nạp ở giai đoạn chấm điểm.
 Hồ sơ hợp lệ chỉ có nghĩa hoàn thành bước kiểm tra hồ sơ, chưa được công nhận hạng sao.
 
 Chạy kiểm thử tự động bằng `python -B -m unittest discover -s tests -v`.
-Các bài kiểm thử tạo database tạm riêng, không sửa dữ liệu trong hai database của người dùng.
+Kiểm thử tích hợp dùng PostgreSQL tạm do CI tạo, không dùng database vận hành.
 
 ## Nền tảng báo cáo tuần
 
@@ -80,7 +68,7 @@ Các cột **Cộng** và **Năng suất bình quân** được tính tự độ
 ## Chạy trên Windows
 
 1. Cài PostgreSQL và chuẩn bị môi trường theo `database\README.md`.
-2. Sao chép `database\config\.env.example` thành `database\.env`, rồi điền thông tin kết nối.
+2. Sao chép `database\.env.example` thành `database\.env`, rồi điền thông tin kết nối.
 3. Chạy website:
 
 ```bat
@@ -121,7 +109,7 @@ Ví dụ máy chủ có IP `192.168.1.20` thì các xã/phường truy cập `ht
 
 Dữ liệu vận hành nằm trong PostgreSQL database `ptnt_qd5277_dev`: schema `app`
 cho nghiệp vụ website, `qd5277` cho dữ liệu chuẩn và `staging` cho dữ liệu nhập thô.
-File `salt_management.db` chỉ còn là nguồn lịch sử/rollback; không phải database mặc định.
+Repository không theo dõi file database; hai thành viên kết nối trực tiếp tới cùng máy chủ.
 
 Mật khẩu PostgreSQL chỉ lưu trong `database\.env`, không ghi cứng hoặc commit vào source.
 Nên sao lưu PostgreSQL định kỳ trước khi đưa vào vận hành chính thức.
@@ -135,7 +123,6 @@ Bản này là **MVP/prototype chạy được**, phù hợp để trình diễn
 - Chính sách mật khẩu mạnh, khóa tài khoản, thời gian hết phiên.
 - Phân quyền chi tiết hơn nếu có nhiều cấp quản lý.
 - Kiểm thử bảo mật, kiểm thử tải và quy trình vận hành.
-- Nếu số người dùng và dữ liệu lớn: chuyển SQLite sang PostgreSQL/SQL Server.
 - Tích hợp đăng nhập tập trung nếu đơn vị đã có hệ thống tài khoản dùng chung.
 
 ## Các bước nâng cấp tiếp theo gợi ý
