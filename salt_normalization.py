@@ -1,4 +1,4 @@
-"""One mapping for web sync, SQLite import and Excel ETL. No database side effects."""
+"""One mapping for PostgreSQL web sync and Excel ETL. No database side effects."""
 from decimal import Decimal, InvalidOperation
 import re
 

@@ -1,23 +1,11 @@
-name: SQLite and PostgreSQL regression
+name: PostgreSQL regression
 on:
   push:
-    branches: ['feature/ui-role-account-postgres-fix', 'fix/weekly-import-foundation', 'feature/admin-units']
   pull_request:
     branches: [main]
 permissions:
   contents: read
 jobs:
-  sqlite:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - run: pip install openpyxl
-      - run: python -B -m unittest discover -s tests -v
-        env:
-          SALT_WEB_BACKEND: sqlite
   postgres:
     runs-on: ubuntu-latest
     services:
@@ -39,5 +27,4 @@ jobs:
       - run: pip install -r database/requirements.txt
       - run: python -B -m unittest discover -s tests -v
         env:
-          SALT_WEB_BACKEND: sqlite
           OCOP_TEST_PG_DSN: postgresql://ocop_test:test-only-local-ci@localhost:5432/postgres

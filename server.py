@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 Website nội bộ quản lý số liệu sản xuất muối
-- Không cần Flask/Django; dùng thư viện chuẩn Python + SQLite.
+- Không cần Flask/Django; dữ liệu được lưu tập trung trên PostgreSQL.
 - openpyxl là tùy chọn để xuất Excel .xlsx.
 
 Chạy: python server.py
@@ -20,7 +20,6 @@ import json
 import os
 import re
 import secrets
-import sqlite3
 import sys
 import threading
 import time
@@ -30,11 +29,9 @@ from permissions import (ROLE_ADMIN, ROLE_STAFF, ROLE_UNIT, ROLE_LABELS,
                          is_admin, is_chi_cuc_user, can_manage_users, can_review_records)
 from salt_normalization import sync_methods
 from weekly_import import WeeklyImportError, parse_weekly_workbook, commit_weekly_preview, effective_weekly_dashboard
-from migrate_weekly import migrate as migrate_weekly
 import repositories
 import admin_units
 import admin_unit_pages
-from migrate_admin_units import migrate as migrate_admin_units
 from datetime import datetime, date
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -43,8 +40,6 @@ from email.parser import BytesParser
 from email.policy import default
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_SQLITE_PATH = os.path.abspath(os.path.join(BASE_DIR, "salt_management.db"))
-DB_PATH = os.path.abspath(os.environ.get("SALT_WEB_DB", DEFAULT_SQLITE_PATH))
 ASSET_FILES = {
     "/assets/quoc-huy.png": ("quoc-huy.png", "image/png"),
     "/assets/app.css": ("app.css", "text/css; charset=utf-8"),
@@ -122,28 +117,15 @@ def verify_password(password: str, stored: str) -> bool:
 
 
 def db_conn():
-    if using_postgres():
-        return compat_connect()
-    con = sqlite3.connect(DB_PATH)
-    con.row_factory = sqlite3.Row
-    con.execute("PRAGMA foreign_keys = ON")
-    return con
-
-
-def using_postgres():
-    return DB_PATH == DEFAULT_SQLITE_PATH and os.environ.get("SALT_WEB_BACKEND", "postgres").lower() != "sqlite"
+    return compat_connect()
 
 
 def get_user(con, user_id):
-    if using_postgres():
-        return repositories.get_user(con, user_id)
-    return con.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+    return repositories.get_user(con, user_id)
 
 
 def find_user_by_username(con, username):
-    if using_postgres():
-        return repositories.find_user_by_username(con, username)
-    return con.execute("SELECT * FROM users WHERE username=?", (username,)).fetchone()
+    return repositories.find_user_by_username(con, username)
 
 
 def find_active_user(con, username):
@@ -152,57 +134,28 @@ def find_active_user(con, username):
 
 
 def create_user(con, username, password_hash, role, unit_name, created_at):
-    if using_postgres():
-        return repositories.create_user(con, username, password_hash, role, unit_name, created_at)
-    cursor = con.execute(
-        "INSERT INTO users(username,password_hash,role,unit_name,active,created_at) VALUES(?,?,?,?,1,?)",
-        (username, password_hash, role, unit_name, created_at),
-    )
-    return cursor.lastrowid
+    return repositories.create_user(con, username, password_hash, role, unit_name, created_at)
 
 
 def set_user_password(con, user_id, password_hash):
-    if using_postgres():
-        repositories.set_local_password(con, user_id, password_hash)
-    else:
-        con.execute("UPDATE users SET password_hash=? WHERE id=?", (password_hash, user_id))
+    repositories.set_local_password(con, user_id, password_hash)
 
 
 def update_user_account(con, user_id, username, role, unit_name, active, password_hash=None):
-    if using_postgres():
-        repositories.update_user(con, user_id, username, role, unit_name, active, password_hash)
-        return
-    if password_hash is not None:
-        con.execute(
-            "UPDATE users SET username=?,password_hash=?,role=?,unit_name=?,active=? WHERE id=?",
-            (username, password_hash, role, unit_name, active, user_id),
-        )
-    else:
-        con.execute(
-            "UPDATE users SET username=?,role=?,unit_name=?,active=? WHERE id=?",
-            (username, role, unit_name, active, user_id),
-        )
+    repositories.update_user(con, user_id, username, role, unit_name, active, password_hash)
 
 
 def delete_user_account(con, user_id):
-    if using_postgres():
-        repositories.delete_user(con, user_id)
-    else:
-        con.execute("DELETE FROM users WHERE id=?", (user_id,))
+    repositories.delete_user(con, user_id)
 
 
 def ocop_available(con=None):
-    """Feature detection only: opening an old website never runs an OCOP migration."""
+    """Return whether the required PostgreSQL application schema is ready."""
     own = con is None
     if own:
         con = db_conn()
     try:
-        if using_postgres():
-            return repositories.postgres_application_ready(con)
-        names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        return {"ocop_entities", "ocop_products", "ocop_applications", "ocop_reviews",
-                "ocop_criteria_sets", "ocop_criteria", "ocop_criteria_options",
-                "DM_CoSo", "DM_SanPham", "PTNT_OCOP", "user_admin_units"} <= names
+        return repositories.postgres_application_ready(con)
     finally:
         if own:
             con.close()
@@ -228,142 +181,11 @@ def ocop_user_links(con, user_id):
 
 def init_db():
     con = db_conn()
-    if using_postgres():
+    try:
         if not repositories.postgres_application_ready(con):
-            con.close()
             raise RuntimeError("PostgreSQL chưa đủ schema ứng dụng. Áp dụng các migration database/sql đến 012_admin_units.sql trước.")
+    finally:
         con.close()
-        return
-    con.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS users(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL UNIQUE,
-            password_hash TEXT NOT NULL,
-            role TEXT NOT NULL CHECK(role IN ('admin','staff','unit')),
-            unit_name TEXT,
-            active INTEGER NOT NULL DEFAULT 1,
-            created_at TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS records(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            report_date TEXT NOT NULL,
-            unit_name TEXT NOT NULL,
-            created_by INTEGER NOT NULL,
-            area_land REAL NOT NULL DEFAULT 0,
-            area_tarp REAL NOT NULL DEFAULT 0,
-            harvest_land REAL NOT NULL DEFAULT 0,
-            harvest_tarp REAL NOT NULL DEFAULT 0,
-            sold_land REAL NOT NULL DEFAULT 0,
-            sold_tarp REAL NOT NULL DEFAULT 0,
-            remaining_land REAL NOT NULL DEFAULT 0,
-            remaining_tarp REAL NOT NULL DEFAULT 0,
-            processed_fine REAL NOT NULL DEFAULT 0,
-            processed_iodized REAL NOT NULL DEFAULT 0,
-            households INTEGER NOT NULL DEFAULT 0,
-            workers INTEGER NOT NULL DEFAULT 0,
-            price_land TEXT NOT NULL DEFAULT '',
-            price_tarp TEXT NOT NULL DEFAULT '',
-            damage_land REAL NOT NULL DEFAULT 0,
-            damage_tarp REAL NOT NULL DEFAULT 0,
-            status TEXT NOT NULL DEFAULT 'draft' CHECK(status IN ('draft','submitted','approved','returned')),
-            note TEXT NOT NULL DEFAULT '',
-            reviewer_note TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL,
-            submitted_at TEXT,
-            approved_at TEXT,
-            FOREIGN KEY(created_by) REFERENCES users(id),
-            UNIQUE(unit_name, report_date)
-        );
-        CREATE TABLE IF NOT EXISTS audit_logs(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            record_id INTEGER,
-            user_id INTEGER,
-            action TEXT NOT NULL,
-            detail TEXT NOT NULL DEFAULT '',
-            created_at TEXT NOT NULL,
-            FOREIGN KEY(record_id) REFERENCES records(id) ON DELETE CASCADE,
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        );
-
-        -- =========================================================
-        -- LỚP DỮ LIỆU CHUẨN HÓA THEO QUY ĐỊNH KỸ THUẬT CSDL
-        -- TỔNG HỢP NGÀNH NÔNG NGHIỆP
-        -- =========================================================
-        CREATE TABLE IF NOT EXISTS DM_DonViHanhChinh(
-            Ma_DonViHanhChinh VARCHAR(10) PRIMARY KEY,
-            Ma_DonViCapTren VARCHAR(10),
-            TenDonVi NVARCHAR(255) NOT NULL,
-            CapHanhChinh VARCHAR(10),
-            TinhTrang BOOLEAN NOT NULL DEFAULT 1,
-            FOREIGN KEY(Ma_DonViCapTren) REFERENCES DM_DonViHanhChinh(Ma_DonViHanhChinh)
-        );
-
-        CREATE TABLE IF NOT EXISTS DM_KhoangThoiGian(
-            Ma_ThoiGian VARCHAR(10) PRIMARY KEY,
-            Nam INTEGER NOT NULL,
-            Thang INTEGER,
-            VuMua NVARCHAR(50)
-        );
-
-        CREATE TABLE IF NOT EXISTS DN_SanLuongMuoi(
-            Ma_SanLuongMuoi INTEGER PRIMARY KEY AUTOINCREMENT,
-            Ma_DonViHanhChinh VARCHAR(10) NOT NULL,
-            Ma_ThoiGian VARCHAR(10) NOT NULL,
-            PhuongPhapSX NVARCHAR(100) NOT NULL,
-            DienTich DECIMAL(12,2) NOT NULL DEFAULT 0,
-            SanLuong DECIMAL(12,2) NOT NULL DEFAULT 0,
-            GiaBanBinhQuan DECIMAL(12,2) NOT NULL DEFAULT 0,
-            FOREIGN KEY(Ma_DonViHanhChinh) REFERENCES DM_DonViHanhChinh(Ma_DonViHanhChinh),
-            FOREIGN KEY(Ma_ThoiGian) REFERENCES DM_KhoangThoiGian(Ma_ThoiGian)
-        );
-
-        CREATE UNIQUE INDEX IF NOT EXISTS UX_DN_SanLuongMuoi
-        ON DN_SanLuongMuoi(Ma_DonViHanhChinh, Ma_ThoiGian, PhuongPhapSX);
-
-        CREATE INDEX IF NOT EXISTS IX_DM_DonViHanhChinh_TenDonVi
-        ON DM_DonViHanhChinh(TenDonVi);
-        """
-    )
-    migrate_weekly(con)
-    count = con.execute("SELECT COUNT(*) FROM users").fetchone()[0]
-    if count == 0:
-        demo_password = hash_password("123456")
-        con.execute(
-            "INSERT INTO users(username,password_hash,role,unit_name,active,created_at) VALUES(?,?,?,?,1,?)",
-            ("chicuc", demo_password, ROLE_ADMIN, "Chi cục Phát triển nông thôn", now_text()),
-        )
-        usernames = [
-            ("an_thoi_dong", "Xã An Thới Đông"),
-            ("thanh_an", "Xã Thạnh An"),
-            ("can_gio", "Xã Cần Giờ"),
-            ("long_dien", "Xã Long Điền"),
-            ("long_son", "Xã Long Sơn"),
-            ("phuoc_thang", "Phường Phước Thắng"),
-            ("long_huong", "Phường Long Hương"),
-            ("ba_ria", "Phường Bà Rịa"),
-        ]
-        for username, unit in usernames:
-            con.execute(
-                "INSERT INTO users(username,password_hash,role,unit_name,active,created_at) VALUES(?,?,?,?,1,?)",
-                (username, demo_password, ROLE_UNIT, unit, now_text()),
-            )
-    # Nạp danh mục hành chính chính thức và thay các mã TMP... cũ nếu có.
-    seed_official_admin_units(con)
-    migrated_tmp_rows = migrate_temporary_unit_codes(con)
-
-    # Đồng bộ lại các báo cáo đã duyệt trước đây sang lớp dữ liệu chuẩn.
-    # Việc này giúp dữ liệu cũ được chuẩn hóa ngay khi nâng cấp hệ thống.
-    approved_rows = con.execute(
-        "SELECT * FROM records WHERE status=? ORDER BY report_date, unit_name",
-        (STATUS_APPROVED,),
-    ).fetchall()
-    for approved_record in approved_rows:
-        sync_standard_salt_record(con, approved_record)
-
-    con.commit()
-    con.close()
 
 
 def add_audit(con, record_id, user_id, action, detail=""):
@@ -455,11 +277,6 @@ def canonical_admin_unit(unit_name, con=None, *, active_only=True):
             con.close()
 
 
-def seed_official_admin_units(con):
-    """Bootstrap only missing catalog data; never reactivate or rename existing rows."""
-    migrate_admin_units(con)
-
-
 def migrate_temporary_unit_codes(con):
     """Chuyển các bản ghi chuẩn hóa đang dùng TMP... sang mã hành chính chính thức."""
     migrated = 0
@@ -542,16 +359,15 @@ def sync_standard_salt_record(con, record):
     time_code = ensure_standard_time(con, record["report_date"])
     month_start = date.fromisoformat(str(record["report_date"])).replace(day=1)
     next_month = date(month_start.year + (month_start.month == 12), (month_start.month % 12) + 1, 1)
-    mode_filter = " AND reporting_mode='cumulative'" if using_postgres() else ""
     latest = con.execute(
         """SELECT * FROM records
            WHERE unit_name=? AND status='approved'
-             AND report_date>=? AND report_date<?""" + mode_filter +
+             AND report_date>=? AND report_date<? AND reporting_mode='cumulative'""" +
         " ORDER BY report_date DESC, id DESC LIMIT 1",
         (record["unit_name"], month_start.isoformat(), next_month.isoformat()),
     ).fetchone()
 
-    sync_methods(con.execute, unit_code, time_code, latest, postgres=using_postgres())
+    sync_methods(con.execute, unit_code, time_code, latest, postgres=True)
 
 
 def sync_all_approved_records():
@@ -863,7 +679,7 @@ def base_page(title, body, session=None, active_path=None):
           <button class="menu-toggle" id="sidebar-toggle" type="button" aria-label="Thu gọn menu" aria-expanded="true" aria-controls="site-sidebar">{icon('menu')}</button>
           <a class="brand-link" href="/dashboard">
             <img class="brand-emblem" src="/assets/quoc-huy.png" alt="Quốc huy Việt Nam" width="56" height="58">
-            <div class="brand-copy"><div class="brand-agency">{display_label}</div><div class="brand-subtitle">HỆ THỐNG QUẢN LÝ NGHIỆP VỤ{' · BẢN THỬ NGHIỆM' if os.path.basename(DB_PATH).upper().endswith('_TEST.DB') else ''}</div></div>
+            <div class="brand-copy"><div class="brand-agency">{display_label}</div><div class="brand-subtitle">HỆ THỐNG QUẢN LÝ NGHIỆP VỤ</div></div>
           </a>
           <div class="header-tools">
             <div class="header-clock"><time class="clock-time" id="clock-time">{datetime.now().strftime('%H:%M:%S')}</time><div class="clock-date" id="clock-date">{date.today().strftime('%d/%m/%Y')}</div></div>
@@ -1061,7 +877,7 @@ def legacy_dashboard_page(session):
     rows = []
     seen_periods = set()
     for row in approved_rows:
-        if using_postgres() and row["reporting_mode"] != "cumulative":
+        if row["reporting_mode"] != "cumulative":
             continue
         key = (row["unit_name"], str(row["report_date"])[:7])
         if key not in seen_periods:
@@ -1490,9 +1306,7 @@ def users_page(session):
         return None
 
     con = db_conn()
-    users = repositories.list_users(con) if using_postgres() else con.execute(
-        "SELECT * FROM users ORDER BY role, unit_name, username"
-    ).fetchall()
+    users = repositories.list_users(con)
     unit_fields = admin_unit_pages.account_fields(con)
     con.close()
 
@@ -2069,11 +1883,10 @@ def legacy_import_excel_data(
                     """,
                     record
                 )
-                if using_postgres():
-                    con.execute(
-                        "UPDATE records SET reporting_mode='cumulative',ma_don_vi_hanh_chinh=? WHERE id=?",
-                        (unit_code, existing["id"]),
-                    )
+                con.execute(
+                    "UPDATE records SET reporting_mode='cumulative',ma_don_vi_hanh_chinh=? WHERE id=?",
+                    (unit_code, existing["id"]),
+                )
 
 
                 add_audit(
@@ -2182,11 +1995,10 @@ def legacy_import_excel_data(
                     """,
                     record
                 )
-                if using_postgres():
-                    con.execute(
-                        "UPDATE records SET reporting_mode='cumulative',ma_don_vi_hanh_chinh=? WHERE id=?",
-                        (unit_code, cur.lastrowid),
-                    )
+                con.execute(
+                    "UPDATE records SET reporting_mode='cumulative',ma_don_vi_hanh_chinh=? WHERE id=?",
+                    (unit_code, cur.lastrowid),
+                )
 
 
                 add_audit(
@@ -2462,11 +2274,10 @@ def save_record(session, data, rid=None):
                 (report_date, unit_name, session["user_id"], values["area_land"], values["area_tarp"], values["harvest_land"], values["harvest_tarp"], values["sold_land"], values["sold_tarp"], values["remaining_land"], values["remaining_tarp"], values["processed_fine"], values["processed_iodized"], values["households"], values["workers"], price_land, price_tarp, values["damage_land"], values["damage_tarp"], note, now_text(), now_text())
             )
             rid = cur.lastrowid
-            if using_postgres():
-                con.execute(
-                    "UPDATE records SET reporting_mode='cumulative',ma_don_vi_hanh_chinh=? WHERE id=?",
-                    (unit_code, rid),
-                )
+            con.execute(
+                "UPDATE records SET reporting_mode='cumulative',ma_don_vi_hanh_chinh=? WHERE id=?",
+                (unit_code, rid),
+            )
             add_audit(con, rid, session["user_id"], "Tạo báo cáo", "Lưu bản nháp")
         else:
             r = con.execute("SELECT * FROM records WHERE id=?", (rid,)).fetchone()
@@ -2478,11 +2289,10 @@ def save_record(session, data, rid=None):
                 """UPDATE records SET report_date=?,unit_name=?,area_land=?,area_tarp=?,harvest_land=?,harvest_tarp=?,sold_land=?,sold_tarp=?,remaining_land=?,remaining_tarp=?,processed_fine=?,processed_iodized=?,households=?,workers=?,price_land=?,price_tarp=?,damage_land=?,damage_tarp=?,note=?,updated_at=? WHERE id=?""",
                 (report_date, unit_name, values["area_land"], values["area_tarp"], values["harvest_land"], values["harvest_tarp"], values["sold_land"], values["sold_tarp"], values["remaining_land"], values["remaining_tarp"], values["processed_fine"], values["processed_iodized"], values["households"], values["workers"], price_land, price_tarp, values["damage_land"], values["damage_tarp"], note, now_text(), rid)
             )
-            if using_postgres():
-                con.execute(
-                    "UPDATE records SET reporting_mode='cumulative',ma_don_vi_hanh_chinh=? WHERE id=?",
-                    (unit_code, rid),
-                )
+            con.execute(
+                "UPDATE records SET reporting_mode='cumulative',ma_don_vi_hanh_chinh=? WHERE id=?",
+                (unit_code, rid),
+            )
             add_audit(con, rid, session["user_id"], "Cập nhật báo cáo", "Chỉnh sửa số liệu")
         con.commit()
         return True, rid
@@ -2563,7 +2373,7 @@ def save_ocop_access(con, session, data):
         raise svc.OcopError("Tài khoản không hợp lệ.")
     code = str(data.get("unit_code", "")).strip()
     with con:
-        con.execute("BEGIN IMMEDIATE")
+        con.execute("BEGIN")
         current = get_user(con, session["user_id"])
         if not current or not current["active"] or not can_manage_users(dict(current)):
             raise svc.OcopError("Chỉ quản trị được phân địa bàn OCOP.", 403)
@@ -2599,7 +2409,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise admin_units.CatalogError("Không tìm thấy trang.",404)
                 self.send_html(base_page("Danh mục đơn vị hành chính",body,session,active_path="/admin-units"))
             else:
-                con.execute("BEGIN IMMEDIATE")
+                con.execute("BEGIN")
                 if parts == ["admin-units","new"] or (len(parts) == 3 and parts[2] == "edit"):
                     admin_units.save_unit(con,session,data,code)
                 elif len(parts) == 3 and parts[2] in ("activate","deactivate"):
@@ -3396,7 +3206,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             con = db_conn()
             try:
-                con.execute("BEGIN IMMEDIATE")
+                con.execute("BEGIN")
                 admin_units.validate_weekly_units(con, preview)
                 result = commit_weekly_preview(con, session, preview, data.get("mode", "skip"), now_text())
                 con.commit()
@@ -3431,7 +3241,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             con = db_conn()
             try:
-                con.execute("BEGIN IMMEDIATE")
+                con.execute("BEGIN")
                 admin_units.require_admin(con,session)
                 unit_name, unit_code = admin_units.account_unit(con,role,data)
                 uid = create_user(con,username,hash_password(password),role,unit_name,now_text())
@@ -3536,7 +3346,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
 
                 try:
-                    con.execute("BEGIN IMMEDIATE")
+                    con.execute("BEGIN")
                     admin_units.require_admin(con,session)
                     unit_name, unit_code = admin_units.account_unit(con,role,data)
                     new_password_hash = None
@@ -3716,51 +3526,29 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    global DB_PATH
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(encoding="utf-8", errors="replace")
     parser = argparse.ArgumentParser(description="Hệ thống quản lý nghiệp vụ Chi cục Phát triển nông thôn")
-    parser.add_argument("--db", help="Đường dẫn database có sẵn; không tự tạo nếu ghi sai tên")
-    parser.add_argument("--skip-legacy-sync", action="store_true", help="Chế độ TEST: giữ nguyên dữ liệu muối khi khởi động")
     parser.add_argument("--host", default=HOST)
     parser.add_argument("--port", type=int, default=PORT)
     args = parser.parse_args()
-    if args.db:
-        DB_PATH = os.path.abspath(args.db)
-    if (args.db or os.environ.get("SALT_WEB_DB")) and not os.path.isfile(DB_PATH):
-        parser.error("Database chỉ định không tồn tại; không chuyển sang database chính.")
-    if args.skip_legacy_sync:
-        if not os.path.basename(DB_PATH).upper().endswith("_TEST.DB"):
-            parser.error("--skip-legacy-sync chỉ dùng cho database *_TEST.db.")
+    init_db()
+    try:
         con_check = db_conn()
-        try:
-            if not ocop_available(con_check):
-                parser.error("Database TEST chưa có cấu trúc OCOP. Chạy migrate_ocop.py trước.")
-        finally:
-            con_check.close()
-        print("Chế độ TEST: không chạy lại chuẩn hóa hoặc chuyển mã dữ liệu muối lúc khởi động.")
-    else:
-        # Preserve the existing salt bootstrap for the original launcher.
-        init_db()
-        try:
-            con_check = db_conn()
-            tmp_count = con_check.execute("SELECT COUNT(*) FROM DM_DonViHanhChinh WHERE Ma_DonViHanhChinh LIKE 'TMP%'").fetchone()[0]
-            official_count = len(admin_units.units(con_check, active_only=True, communes_only=True))
-            con_check.close()
-            synced = sync_all_approved_records()
-            print(f"Đã đồng bộ dữ liệu chuẩn từ {synced} báo cáo đã duyệt.")
-            print(f"Danh mục hành chính chính thức: {official_count} đơn vị; mã TMP còn lại: {tmp_count}.")
-        except Exception as e:
-            print(f"Cảnh báo: chưa đồng bộ được dữ liệu chuẩn: {e}")
+        tmp_count = con_check.execute("SELECT COUNT(*) FROM DM_DonViHanhChinh WHERE Ma_DonViHanhChinh LIKE 'TMP%'").fetchone()[0]
+        official_count = len(admin_units.units(con_check, active_only=True, communes_only=True))
+        con_check.close()
+        synced = sync_all_approved_records()
+        print(f"Đã đồng bộ dữ liệu chuẩn từ {synced} báo cáo đã duyệt.")
+        print(f"Danh mục hành chính chính thức: {official_count} đơn vị; mã TMP còn lại: {tmp_count}.")
+    except Exception as e:
+        print(f"Cảnh báo: chưa đồng bộ được dữ liệu chuẩn: {e}")
     server=ThreadingHTTPServer((args.host,args.port),Handler)
     print("="*72)
     print("HỆ THỐNG QUẢN LÝ NGHIỆP VỤ CHI CỤC PHÁT TRIỂN NÔNG THÔN")
-    if using_postgres():
-        settings = load_settings()
-        print(f"Database PostgreSQL: {settings.dbname} @ {settings.host}:{settings.port}")
-    else:
-        print(f"Database SQLite TEST: {DB_PATH}")
+    settings = load_settings()
+    print(f"Database PostgreSQL: {settings.dbname} @ {settings.host}:{settings.port}")
     print(f"Đang chạy tại: http://127.0.0.1:{args.port}")
     print(f"Trong mạng LAN: http://<IP-máy-chủ>:{args.port}")
     print("Tài khoản demo Chi cục: chicuc / 123456")

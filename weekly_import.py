@@ -259,7 +259,16 @@ def effective_weekly_dashboard(con, *, week="", batch="", unit_code=None):
         if unit_code is not None:
             sql += " AND ma_don_vi_hanh_chinh=?"
             args.append(unit_code)
-        return [dict(row) for row in con.execute(sql + " ORDER BY unit_name", args).fetchall()]
+        rows = []
+        for row in con.execute(sql + " ORDER BY unit_name", args).fetchall():
+            item = dict(row)
+            # The PostgreSQL table stores the two production foundations;
+            # dashboard totals are derived instead of duplicated in the schema.
+            item["sold_total"] = (item.get("sold_land") or 0) + (item.get("sold_tarp") or 0)
+            item["remaining_total"] = ((item.get("remaining_land") or 0)
+                                       + (item.get("remaining_tarp") or 0))
+            rows.append(item)
+        return rows
 
     rows = effective_rows(selected)
     warnings = con.execute("""SELECT COUNT(*) FROM salt_weekly_records r

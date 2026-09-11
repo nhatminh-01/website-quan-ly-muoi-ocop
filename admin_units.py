@@ -32,9 +32,8 @@ def units(con, *, active_only=False, communes_only=False):
 
 
 def get_unit(con, code, *, lock=False):
-    # SQLite writes hold BEGIN IMMEDIATE; PG must also keep the checked catalog
-    # row stable until the account/import transaction commits.
-    suffix = " FOR SHARE" if lock and hasattr(con, "_connection") else ""
+    # Keep the checked catalog row stable until the account/import transaction commits.
+    suffix = " FOR SHARE" if lock else ""
     row = con.execute(SELECT + " WHERE Ma_DonViHanhChinh=?" + suffix, (code,)).fetchone()
     return dict(row) if row else None
 
@@ -80,8 +79,7 @@ def audit(con, actor_id, action, code, before, after):
 
 
 def save_unit(con, session, data, code=None):
-    if hasattr(con, "_connection"):
-        con.execute("LOCK TABLE DM_DonViHanhChinh IN SHARE ROW EXCLUSIVE MODE")
+    con.execute("LOCK TABLE DM_DonViHanhChinh IN SHARE ROW EXCLUSIVE MODE")
     require_admin(con, session)
     old = get_unit(con, code) if code else None
     if code and not old:

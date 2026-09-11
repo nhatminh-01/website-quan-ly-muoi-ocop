@@ -12,13 +12,8 @@ from functools import wraps
 import json
 import re
 import secrets
-import sqlite3
+import psycopg
 from permissions import ROLE_LABELS, is_chi_cuc_user
-
-try:
-    import psycopg
-except ImportError:  # Legacy SQLite-only test/runtime.
-    psycopg = None
 
 
 class OcopError(Exception):
@@ -94,7 +89,7 @@ def _transaction(con):
     nested = con.in_transaction
     savepoint = "ocop_" + secrets.token_hex(6)
     try:
-        con.execute("SAVEPOINT " + savepoint if nested else "BEGIN IMMEDIATE")
+        con.execute("SAVEPOINT " + savepoint if nested else "BEGIN")
         yield
         con.execute("RELEASE SAVEPOINT " + savepoint) if nested else con.commit()
     except Exception:
@@ -113,11 +108,9 @@ def _mutation(fn):
             with _transaction(con):
                 get_scope(con, session)
                 return fn(con, session, *args, **kwargs)
-        except tuple(error for error in (sqlite3.IntegrityError,
-                                         getattr(psycopg, "IntegrityError", None)) if error):
+        except psycopg.IntegrityError:
             raise OcopError("Dữ liệu bị trùng hoặc không còn phù hợp. Vui lòng tải lại và kiểm tra.", 409) from None
-        except tuple(error for error in (sqlite3.Error,
-                                         getattr(psycopg, "Error", None)) if error):
+        except psycopg.Error:
             raise OcopError("Không thể lưu dữ liệu lúc này. Vui lòng thử lại.", 503) from None
     return execute
 
@@ -547,7 +540,7 @@ def update_product(con, session, object_id, data):
     # Drafts that have never been submitted follow the product's current set.
     # Returned/submitted history remains frozen to the set used on first submit.
     con.execute("""UPDATE ocop_applications SET criteria_set_id=?,updated_at=?,revision=revision+1
-        WHERE product_id=? AND submitted_at IS NULL AND status='draft' AND criteria_set_id IS NOT ?""",
+        WHERE product_id=? AND submitted_at IS NULL AND status='draft' AND criteria_set_id IS DISTINCT FROM ?""",
         (criteria_set["id"], when, row["id"], criteria_set["id"]))
     _audit(con, session, "product", row["id"], "edit", {"before": row, "after": {"name": name, "product_group": group, "description": description, "ma_co_so": entity["ma_co_so"], "criteria_set_id": criteria_set["id"], "criteria_set_code": criteria_set["code"]}}, when)
     return get_product(con, session, row["id"])
