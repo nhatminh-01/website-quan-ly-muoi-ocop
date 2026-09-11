@@ -12,12 +12,13 @@ import unittest
 
 import migrate_weekly
 import server
+import admin_units
 from salt_normalization import method_values, sync_methods
 from weekly_import import parse_weekly_workbook, commit_weekly_preview, effective_weekly_dashboard
 import test_integration as integration
 
 
-def preview(day, token, factor=1, names=("Xã An Thới Đông",)):
+def preview(day, token, factor=1, names=("Xã An Thới Đông",), lookup=None):
     from openpyxl import Workbook
     wb = Workbook()
     ws = wb.active
@@ -35,13 +36,13 @@ def preview(day, token, factor=1, names=("Xã An Thới Đông",)):
     stream = io.BytesIO()
     wb.save(stream)
     wb.close()
-    return parse_weekly_workbook(stream.getvalue(), day, "Tuần", token + ".xlsx", server.canonical_admin_unit)
+    return parse_weekly_workbook(stream.getvalue(), day, "Tuần", token + ".xlsx", lookup or server.canonical_admin_unit)
 
 
 def exercise_effective_weeks(test, con):
     """Same contract executed against SQLite and PostgreSQL."""
     def save(day, token, factor=1, mode="skip", names=("Xã An Thới Đông",)):
-        result = commit_weekly_preview(con, {"user_id":1}, preview(day, token, factor, names), mode, "2026-09-10")
+        result = commit_weekly_preview(con, {"user_id":1}, preview(day, token, factor, names, lookup=admin_units.unit_lookup(con)), mode, "2026-09-10")
         con.commit()
         return result
 

@@ -277,6 +277,7 @@ body.sidebar-collapsed{--sidebar-width:78px}
 .preview-warning{background:#fffdf7}.preview-error{background:#fff8f6}
 .confirm-import,.weekly-filter{display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap}
 .weekly-filter .field{min-width:220px}.weekly-filter .sheet-picker{flex:1;max-width:720px}.weekly-filter .sheet-picker select{width:100%}.weekly-progress{margin-left:auto;display:flex;align-items:baseline;gap:7px;color:var(--muted)}
+[data-unit-field][hidden],[data-office-field][hidden]{display:none!important}
 .weekly-progress strong{font-size:25px;color:var(--primary)}
 .weekly-table{min-width:980px}.weekly-table thead tr:first-child th{text-align:center}.weekly-table thead tr:first-child th:first-child{text-align:left}
 .weekly-table tfoot th{background:#f4f6f8;color:#27384d;font-weight:750}.missing-row{color:var(--muted)}

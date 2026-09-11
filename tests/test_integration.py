@@ -13,6 +13,7 @@ from urllib.parse import urlencode
 
 import server
 import ocop_db
+import migrate_admin_units
 from migrate_weekly import SCHEMA as WEEKLY_SCHEMA
 
 
@@ -80,6 +81,7 @@ class IntegrationTests(unittest.TestCase):
             con.execute("INSERT INTO DM_DonViHanhChinh VALUES(?,NULL,?,'xa',1)",(code,name))
         con.commit()
         ocop_db.migrate(con)
+        migrate_admin_units.migrate(con)
         con.commit()
         con.close()
         class QuietHandler(server.Handler):

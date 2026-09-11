@@ -123,7 +123,7 @@ class RoleAccountTests(unittest.TestCase):
     def test_edit_form_staff_and_session_revocation(self):
         staff,uid = self.staff()
         self.assertIn('value="staff" selected',self.admin.request('GET',f'/users/{uid}/edit')[2].decode())
-        self.admin.request('POST',f'/users/{uid}/edit',{'username':'staff_test','role':'unit','active':'1','unit_name':'Xã Thạnh An'})
+        self.admin.request('POST',f'/users/{uid}/edit',{'username':'staff_test','role':'unit','active':'1','unit_code':'27676'})
         self.assertFalse(any(s['user_id']==uid for s in server.SESSIONS.values()))
         self.assertEqual(staff.request('GET','/dashboard')[0],303)
 

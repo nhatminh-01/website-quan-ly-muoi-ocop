@@ -32,6 +32,9 @@ from salt_normalization import sync_methods
 from weekly_import import WeeklyImportError, parse_weekly_workbook, commit_weekly_preview, effective_weekly_dashboard
 from migrate_weekly import migrate as migrate_weekly
 import repositories
+import admin_units
+import admin_unit_pages
+from migrate_admin_units import migrate as migrate_admin_units
 from datetime import datetime, date
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -64,34 +67,6 @@ STATUS_LABELS = {
 
 SESSIONS: dict[str, dict] = {}
 SESSION_LOCK = threading.Lock()
-
-UNITS = [
-    "Xã An Thới Đông",
-    "Xã Thạnh An",
-    "Xã Cần Giờ",
-    "Xã Long Điền",
-    "Xã Long Sơn",
-    "Phường Phước Thắng",
-    "Phường Long Hương",
-    "Phường Bà Rịa",
-]
-
-# Mã đơn vị hành chính chính thức theo Quyết định 19/2025/QĐ-TTg.
-HCMC_ADMIN_CODE = "79"
-HCMC_ADMIN_NAME = "Thành phố Hồ Chí Minh"
-OFFICIAL_ADMIN_UNITS = {
-    "Xã An Thới Đông": ("27673", "xa"),
-    "Xã Thạnh An": ("27676", "xa"),
-    "Xã Cần Giờ": ("27664", "xa"),
-    "Xã Long Điền": ("26659", "xa"),
-    "Xã Long Sơn": ("26545", "xa"),
-    "Phường Phước Thắng": ("26542", "phuong"),
-    "Phường Long Hương": ("26566", "phuong"),
-    "Phường Bà Rịa": ("26560", "phuong"),
-}
-OFFICIAL_ADMIN_LOOKUP = {name.casefold(): value for name, value in OFFICIAL_ADMIN_UNITS.items()}
-OFFICIAL_ADMIN_LOOKUP["xã an thời đông".casefold()] = OFFICIAL_ADMIN_UNITS["Xã An Thới Đông"]
-OFFICIAL_ADMIN_NAMES_BY_CODE = {code: name for name, (code, _level) in OFFICIAL_ADMIN_UNITS.items()}
 
 NUMERIC_FIELDS = [
     "area_land", "area_tarp",
@@ -256,9 +231,7 @@ def init_db():
     if using_postgres():
         if not repositories.postgres_application_ready(con):
             con.close()
-            raise RuntimeError("PostgreSQL chưa có schema app. Chạy DB/sql/004_app_schema.sql trước.")
-        seed_official_admin_units(con)
-        con.commit()
+            raise RuntimeError("PostgreSQL chưa đủ schema ứng dụng. Áp dụng các migration database/sql đến 012_admin_units.sql trước.")
         con.close()
         return
     con.executescript(
@@ -471,56 +444,27 @@ def price_average(value):
     return round((numbers[0] + numbers[1]) / 2.0, 2)
 
 
-def _temporary_unit_code(unit_name):
-    """Mã nội bộ tạm thời cho đơn vị ngoài danh mục chính thức đã cấu hình."""
-    digest = hashlib.sha1(unit_name.casefold().encode("utf-8")).hexdigest()[:7].upper()
-    return "TMP" + digest
-
-
-def canonical_admin_unit(unit_name):
-    """Return the configured official name/code, including known source aliases."""
-    official = OFFICIAL_ADMIN_LOOKUP.get(str(unit_name).strip().casefold())
-    if not official:
-        return None
-    code, _level = official
-    return OFFICIAL_ADMIN_NAMES_BY_CODE[code], code
+def canonical_admin_unit(unit_name, con=None, *, active_only=True):
+    own = con is None
+    if own:
+        con = db_conn()
+    try:
+        return admin_units.unit_lookup(con, active_only=active_only)(unit_name)
+    finally:
+        if own:
+            con.close()
 
 
 def seed_official_admin_units(con):
-    """Tạo/cập nhật danh mục đơn vị hành chính chính thức của hệ thống."""
-    con.execute(
-        """
-        INSERT INTO DM_DonViHanhChinh
-        (Ma_DonViHanhChinh, Ma_DonViCapTren, TenDonVi, CapHanhChinh, TinhTrang)
-        VALUES(?, NULL, ?, 'tinh', TRUE)
-        ON CONFLICT(Ma_DonViHanhChinh) DO UPDATE SET
-            TenDonVi=excluded.TenDonVi,
-            CapHanhChinh=excluded.CapHanhChinh,
-            TinhTrang=TRUE
-        """,
-        (HCMC_ADMIN_CODE, HCMC_ADMIN_NAME),
-    )
-
-    for unit_name, (code, level) in OFFICIAL_ADMIN_UNITS.items():
-        con.execute(
-            """
-            INSERT INTO DM_DonViHanhChinh
-            (Ma_DonViHanhChinh, Ma_DonViCapTren, TenDonVi, CapHanhChinh, TinhTrang)
-            VALUES(?, ?, ?, ?, TRUE)
-            ON CONFLICT(Ma_DonViHanhChinh) DO UPDATE SET
-                Ma_DonViCapTren=excluded.Ma_DonViCapTren,
-                TenDonVi=excluded.TenDonVi,
-                CapHanhChinh=excluded.CapHanhChinh,
-                TinhTrang=TRUE
-            """,
-            (code, HCMC_ADMIN_CODE, unit_name, level),
-        )
+    """Bootstrap only missing catalog data; never reactivate or rename existing rows."""
+    migrate_admin_units(con)
 
 
 def migrate_temporary_unit_codes(con):
     """Chuyển các bản ghi chuẩn hóa đang dùng TMP... sang mã hành chính chính thức."""
     migrated = 0
-    for unit_name, (official_code, _level) in OFFICIAL_ADMIN_UNITS.items():
+    for unit in admin_units.units(con):
+        unit_name, official_code = unit["name"], unit["code"]
         old_rows = con.execute(
             """
             SELECT Ma_DonViHanhChinh
@@ -567,40 +511,12 @@ def migrate_temporary_unit_codes(con):
 
 
 def ensure_standard_unit(con, unit_name):
-    """Ưu tiên mã hành chính chính thức; chỉ dùng TMP cho đơn vị chưa có trong danh mục."""
-    official = OFFICIAL_ADMIN_LOOKUP.get(str(unit_name).strip().casefold())
-    if official:
-        code, _level = official
-        return code
+    """Resolve the DB code, including historical names; never create a TMP unit."""
+    unit = canonical_admin_unit(unit_name, con, active_only=False)
+    if not unit:
+        raise ValueError(f"Đơn vị chưa có mã hành chính: {unit_name}")
+    return unit[1]
 
-    row = con.execute(
-        "SELECT Ma_DonViHanhChinh FROM DM_DonViHanhChinh WHERE lower(TenDonVi)=lower(?) ORDER BY CASE WHEN Ma_DonViHanhChinh LIKE 'TMP%' THEN 1 ELSE 0 END LIMIT 1",
-        (unit_name,),
-    ).fetchone()
-    if row:
-        return row["Ma_DonViHanhChinh"]
-
-    code = _temporary_unit_code(unit_name)
-    lower_name = unit_name.casefold()
-    if lower_name.startswith("phường "):
-        level = "phuong"
-    elif lower_name.startswith("xã "):
-        level = "xa"
-    elif lower_name.startswith("thị trấn "):
-        level = "thitran"
-    else:
-        level = "xa"
-
-    con.execute(
-        """
-        INSERT INTO DM_DonViHanhChinh
-        (Ma_DonViHanhChinh, Ma_DonViCapTren, TenDonVi, CapHanhChinh, TinhTrang)
-        VALUES(?, NULL, ?, ?, TRUE)
-        ON CONFLICT(Ma_DonViHanhChinh) DO NOTHING
-        """,
-        (code, unit_name, level),
-    )
-    return code
 
 def ensure_standard_time(con, report_date):
     """Tạo mã kỳ tháng YYYY-MM cho dữ liệu tổng hợp chuẩn."""
@@ -922,6 +838,7 @@ def base_page(title, body, session=None, active_path=None):
             salt_items.append(("/standard-data", "file", "Dữ liệu chuẩn hóa"))
         if can_manage_users(session):
             system_items.append(("/users", "users", "Tài khoản"))
+            system_items.append(("/admin-units", "location", "Danh mục đơn vị hành chính"))
         system_items.extend([("/change-password", "key", "Đổi mật khẩu"),
                              ("/logout", "logout", "Đăng xuất")])
         nav_groups = [("TỔNG QUAN", [("/dashboard", "dashboard", "Bảng giám sát")]),
@@ -954,14 +871,14 @@ def base_page(title, body, session=None, active_path=None):
           </div>
         </header>
         <aside class="sidebar" id="site-sidebar" aria-label="Menu chính">
-          <form class="sidebar-search" action="/records" method="get" role="search"><button type="submit" aria-label="Tìm báo cáo muối">{icon('search')}</button><input name="q" type="search" placeholder="Tìm báo cáo muối..." aria-label="Tìm báo cáo muối theo đơn vị hoặc ghi chú"></form>
+          <form class="sidebar-search" action="/records" method="get" role="search"><button type="submit" aria-label="Tìm báo cáo">{icon('search')}</button><input name="q" type="search" placeholder="Tìm báo cáo" aria-label="Tìm báo cáo theo đơn vị hoặc ghi chú"></form>
           <nav class="sidebar-nav" aria-label="Chức năng">{''.join(nav)}</nav>
           <div class="sidebar-footer"><img class="sidebar-watermark" src="/assets/quoc-huy.png" alt="" width="148" height="152"><div class="sidebar-footer-line"></div><strong><span>TRUNG TÂM CHUYỂN ĐỔI SỐ</span><span>NÔNG NGHIỆP VÀ MÔI TRƯỜNG</span></strong><p>Theo dõi sản xuất và tổng hợp báo cáo các đơn vị.</p></div>
         </aside>
         <button type="button" id="sidebar-backdrop" class="sidebar-backdrop" aria-label="Đóng menu" tabindex="-1"></button>
         """
         body = f'<main class="app-main" id="main-content">{body}</main>'
-    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260910-weekly-tabs"><script src="/assets/app.js?v=20260910-import-status" defer></script></head><body>{top}{body}</body></html>"""
+    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260910-admin-units"><script src="/assets/app.js?v=20260910-admin-units" defer></script></head><body>{top}{body}</body></html>"""
 
 
 def login_page(message=""):
@@ -1001,11 +918,13 @@ def fetch_records(con, session, filters):
     sql = "SELECT r.*, u.username creator_username FROM records r JOIN users u ON u.id=r.created_by WHERE 1=1"
     args = []
     if session["role"] == ROLE_UNIT:
-        sql += " AND r.unit_name=?"
-        args.append(session["unit_name"])
+        names = admin_units.report_names(con, session["unit_name"])
+        sql += " AND r.unit_name IN (" + ",".join("?" for _ in names) + ")"
+        args.extend(names)
     elif filters.get("unit"):
-        sql += " AND r.unit_name=?"
-        args.append(filters["unit"])
+        names = admin_units.report_names(con, filters["unit"])
+        sql += " AND r.unit_name IN (" + ",".join("?" for _ in names) + ")"
+        args.extend(names)
     if filters.get("status"):
         sql += " AND r.status=?"
         args.append(filters["status"])
@@ -1024,7 +943,7 @@ def fetch_records(con, session, filters):
 
 
 def get_units(con):
-    return [r[0] for r in con.execute("SELECT DISTINCT unit_name FROM users WHERE role='unit' AND active=1 AND unit_name IS NOT NULL ORDER BY unit_name").fetchall()]
+    return [r["name"] for r in admin_units.units(con, active_only=True, communes_only=True)]
 
 
 def dashboard_page(session, query=""):
@@ -1510,7 +1429,13 @@ def record_form_page(session, record=None, error=""):
 
 
 def can_access_record(session, r):
-    return is_chi_cuc_user(session) or r["unit_name"] == session["unit_name"]
+    if is_chi_cuc_user(session):
+        return True
+    con = db_conn()
+    try:
+        return r["unit_name"] in admin_units.report_names(con, session["unit_name"])
+    finally:
+        con.close()
 
 
 def detail_page(session, rid):
@@ -1568,6 +1493,7 @@ def users_page(session):
     users = repositories.list_users(con) if using_postgres() else con.execute(
         "SELECT * FROM users ORDER BY role, unit_name, username"
     ).fetchall()
+    unit_fields = admin_unit_pages.account_fields(con)
     con.close()
 
     trs = ""
@@ -1640,10 +1566,7 @@ def users_page(session):
               </select>
             </div>
 
-            <div class="field">
-              <label>Tên đơn vị</label>
-              <input name="unit_name" required placeholder="Xã/Phường...">
-            </div>
+            {unit_fields}
 
           </div>
 
@@ -1691,6 +1614,11 @@ def user_edit_page(session, user, error=""):
     staff_selected = "selected" if user["role"] == ROLE_STAFF else ""
     admin_selected = "selected" if user["role"] == ROLE_ADMIN else ""
     active_checked = "checked" if user["active"] else ""
+    con = db_conn()
+    try:
+        unit_fields = admin_unit_pages.account_fields(con, user)
+    finally:
+        con.close()
 
     body = f"""
     <div class="container">
@@ -1745,12 +1673,7 @@ def user_edit_page(session, user, error=""):
             </select>
           </div>
 
-          <div class="field">
-            <label>Tên đơn vị</label>
-            <input name="unit_name"
-                   value="{esc(user['unit_name'] or '')}"
-                   required>
-          </div>
+          {unit_fields}
 
           <div class="field">
             <label>
@@ -2516,7 +2439,7 @@ def save_record(session, data, rid=None):
     if not unit_name or not report_date:
         return False, "Vui lòng chọn đơn vị và ngày/kỳ chốt số liệu."
     official_unit = canonical_admin_unit(unit_name)
-    if using_postgres() and not official_unit:
+    if not official_unit:
         return False, f"Đơn vị {unit_name} chưa có trong danh mục hành chính chính thức."
     unit_code = official_unit[1] if official_unit else None
     unit_name = official_unit[0] if official_unit else unit_name
@@ -2625,7 +2548,7 @@ def ocop_access_page(con, session):
     return "Phân địa bàn OCOP", f'''<div class="container ocop-page">{take_flash(session)}
       <div class="page-head"><h1>Phân địa bàn OCOP</h1><a class="btn" href="/users">Tài khoản</a></div>
       <div class="notice info">Quyền OCOP dùng mã hành chính. Tài khoản chưa được gán địa bàn chưa thể truy cập hồ sơ OCOP.
-      Việc gán địa bàn này không đổi tên đơn vị hoặc dữ liệu sản xuất muối.</div>
+      Việc gán địa bàn cập nhật tên đơn vị của tài khoản và phạm vi chung cho hệ thống; dữ liệu báo cáo cũ được giữ nguyên.</div>
       <div class="card table-wrap"><table class="summary-table"><thead><tr><th>Tài khoản</th><th>Tên đơn vị hiện tại</th>
       <th>Địa bàn được phép quản lý</th></tr></thead><tbody>{''.join(forms)}</tbody></table></div></div>'''
 
@@ -2646,22 +2569,57 @@ def save_ocop_access(con, session, data):
             raise svc.OcopError("Chỉ quản trị được phân địa bàn OCOP.", 403)
         svc.get_scope(con, session)
         user = con.execute("SELECT id FROM users WHERE id=? AND active=1 AND role='unit'", (uid,)).fetchone()
-        unit = con.execute("""SELECT Ma_DonViHanhChinh FROM DM_DonViHanhChinh
-            WHERE Ma_DonViHanhChinh=? AND TinhTrang=1 AND CapHanhChinh IN ('xa','phuong')
-            AND Ma_DonViHanhChinh NOT LIKE 'TMP%'""", (code,)).fetchone()
-        if not user or not unit:
+        if not user:
             raise svc.OcopError("Chọn tài khoản đang hoạt động và địa bàn chính thức.")
-        old = con.execute("SELECT ma_don_vi_hanh_chinh FROM user_admin_units WHERE user_id=?", (uid,)).fetchone()
-        con.execute("""INSERT INTO user_admin_units(user_id,ma_don_vi_hanh_chinh) VALUES(?,?)
-            ON CONFLICT(user_id) DO UPDATE SET ma_don_vi_hanh_chinh=excluded.ma_don_vi_hanh_chinh""", (uid,code))
-        con.execute("""INSERT INTO audit_logs(record_id,user_id,action,detail,created_at,module,object_type,object_id)
-            VALUES(NULL,?,?,?,?, 'ocop','user_scope',?)""",
-            (session['user_id'], 'Phân địa bàn OCOP', f"{old[0] if old else ''} -> {code}", now_text(), str(uid)))
+        try:
+            _, code = admin_units.account_unit(con,ROLE_UNIT,{"unit_code":code})
+        except admin_units.CatalogError as exc:
+            raise svc.OcopError(str(exc),exc.status) from exc
+        admin_units.assign_account(con,session['user_id'],uid,code)
     invalidate_user_sessions(uid)
 
 
 class Handler(BaseHTTPRequestHandler):
     server_version = "SaltData/1.0"
+
+    def handle_admin_units(self, path, query, session, data=None):
+        if path.rstrip("/") != "/admin-units" and not path.startswith("/admin-units/"):
+            return False
+        con = db_conn()
+        parts = [p for p in path.split("/") if p]
+        code = parts[1] if len(parts) == 3 else None
+        try:
+            admin_units.require_admin(con,session)
+            if data is None:
+                if len(parts) == 1:
+                    body = admin_unit_pages.listing(con,session,query,csrf_input(session),take_flash(session))
+                elif parts == ["admin-units","new"] or (len(parts) == 3 and parts[2] == "edit"):
+                    body = admin_unit_pages.form(con,session,csrf_input(session),code)
+                else:
+                    raise admin_units.CatalogError("Không tìm thấy trang.",404)
+                self.send_html(base_page("Danh mục đơn vị hành chính",body,session,active_path="/admin-units"))
+            else:
+                con.execute("BEGIN IMMEDIATE")
+                if parts == ["admin-units","new"] or (len(parts) == 3 and parts[2] == "edit"):
+                    admin_units.save_unit(con,session,data,code)
+                elif len(parts) == 3 and parts[2] in ("activate","deactivate"):
+                    admin_units.set_active(con,session,code,parts[2] == "activate")
+                else:
+                    raise admin_units.CatalogError("Thao tác không được hỗ trợ; danh mục chỉ ngưng hoạt động, không xóa.",400)
+                con.commit()
+                set_flash(session,"ok","Đã lưu danh mục hành chính.")
+                self.redirect("/admin-units")
+        except (admin_units.CatalogError, *INTEGRITY_ERRORS) as exc:
+            con.rollback()
+            status = exc.status if isinstance(exc,admin_units.CatalogError) else 409
+            message = str(exc) if isinstance(exc,admin_units.CatalogError) else "Mã hoặc dữ liệu đơn vị bị trùng/không hợp lệ."
+            body = f'<div class="container"><div class="notice err">{esc(message)}</div><a class="btn" href="/admin-units">Quay lại danh mục</a></div>'
+            if status in (400,409) and data is not None and (parts == ["admin-units","new"] or (len(parts) == 3 and parts[2] == "edit")):
+                body = admin_unit_pages.form(con,session,csrf_input(session),code,message,data)
+            self.send_html(base_page("Danh mục đơn vị hành chính",body,session,active_path="/admin-units"),status)
+        finally:
+            con.close()
+        return True
 
     def log_message(self, format, *args):
         sys.stdout.write("%s - - [%s] %s\n" % (self.client_address[0], self.log_date_time_string(), format%args))
@@ -2859,6 +2817,8 @@ class Handler(BaseHTTPRequestHandler):
         # =========================
         if (path == "/users" or path.startswith("/users/") or path.rstrip("/") == "/ocop/access") and not can_manage_users(session):
             self.send_html(base_page("403", '<div class="container"><div class="notice err">Không có quyền quản lý tài khoản.</div></div>', session), 403)
+            return
+        if self.handle_admin_units(path, parsed.query, session):
             return
         if self.handle_ocop(path, parsed.query, session):
             return
@@ -3328,6 +3288,8 @@ class Handler(BaseHTTPRequestHandler):
         if (path == "/users" or path.startswith("/users/") or path.rstrip("/") == "/ocop/access") and not can_manage_users(session):
             self.send_html(base_page("403", '<div class="container"><div class="notice err">Không có quyền quản lý tài khoản.</div></div>', session), 403)
             return
+        if self.handle_admin_units(path, parsed.query, session, data):
+            return
         if self.handle_ocop(path, parsed.query, session, data):
             return
         if path == "/import-excel":
@@ -3409,15 +3371,18 @@ class Handler(BaseHTTPRequestHandler):
             ).strip()
 
 
+            con = db_conn()
             try:
                 session["weekly_import_preview"] = parse_weekly_workbook(
                     uploaded["content"], report_date, sheet_name, filename,
-                    canonical_admin_unit,
+                    admin_units.unit_lookup(con),
                 )
             except WeeklyImportError as exc:
                 set_flash(session, "err", str(exc))
                 self.redirect("/import-excel")
                 return
+            finally:
+                con.close()
             self.redirect("/import-excel/preview")
             return
         if path == "/import-excel/confirm":
@@ -3431,9 +3396,11 @@ class Handler(BaseHTTPRequestHandler):
                 return
             con = db_conn()
             try:
+                con.execute("BEGIN IMMEDIATE")
+                admin_units.validate_weekly_units(con, preview)
                 result = commit_weekly_preview(con, session, preview, data.get("mode", "skip"), now_text())
                 con.commit()
-            except WeeklyImportError as exc:
+            except (WeeklyImportError, admin_units.CatalogError) as exc:
                 con.rollback()
                 set_flash(session, "err", str(exc))
                 self.redirect("/import-excel/preview")
@@ -3456,14 +3423,33 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path=="/users/new":
             if not can_manage_users(session): self.send_html(base_page("403","<div class='container'><div class='notice err'>Không có quyền.</div></div>",session),403); return
-            username=data.get("username","").strip(); password=data.get("password",""); role=data.get("role",ROLE_UNIT); unit_name=data.get("unit_name","").strip()
-            if role not in tuple(ROLE_LABELS) or len(password)<6 or not username or not unit_name: set_flash(session,"err","Thông tin tài khoản chưa hợp lệ."); self.redirect("/users"); return
-            con=db_conn()
+            username = data.get("username", "").strip()
+            password = data.get("password", "")
+            role = data.get("role", ROLE_UNIT)
+            if role not in ROLE_LABELS or len(password) < 6 or not username:
+                self.send_html(base_page("Lỗi", '<div class="container">Thông tin tài khoản chưa hợp lệ.</div>', session),400)
+                return
+            con = db_conn()
             try:
-                create_user(con, username, hash_password(password), role, unit_name, now_text()); con.commit(); set_flash(session,"ok","Đã tạo tài khoản.")
-            except INTEGRITY_ERRORS: set_flash(session,"err","Tên đăng nhập đã tồn tại.")
-            finally: con.close()
-            self.redirect("/users"); return
+                con.execute("BEGIN IMMEDIATE")
+                admin_units.require_admin(con,session)
+                unit_name, unit_code = admin_units.account_unit(con,role,data)
+                uid = create_user(con,username,hash_password(password),role,unit_name,now_text())
+                admin_units.assign_account(con,session["user_id"],uid,unit_code)
+                con.commit()
+                set_flash(session,"ok","Đã tạo tài khoản và phạm vi địa bàn.")
+            except admin_units.CatalogError as exc:
+                con.rollback()
+                self.send_html(base_page("Lỗi",f'<div class="container"><div class="notice err">{esc(exc)}</div></div>',session),exc.status)
+                return
+            except INTEGRITY_ERRORS:
+                con.rollback()
+                self.send_html(base_page("Lỗi",'<div class="container">Tên đăng nhập đã tồn tại.</div>',session),409)
+                return
+            finally:
+                con.close()
+            self.redirect("/users")
+            return
         if path=="/change-password":
             old=data.get("old",""); new=data.get("new",""); new2=data.get("new2","")
             con=db_conn(); u=get_user(con, session["user_id"])
@@ -3528,7 +3514,7 @@ class Handler(BaseHTTPRequestHandler):
                 password = data.get("password", "")
                 active = 1 if data.get("active") == "1" else 0
 
-                if not username or not unit_name:
+                if not username:
                     con.close()
                     self.send_html(
                         user_edit_page(
@@ -3550,7 +3536,9 @@ class Handler(BaseHTTPRequestHandler):
                     return
 
                 try:
-
+                    con.execute("BEGIN IMMEDIATE")
+                    admin_units.require_admin(con,session)
+                    unit_name, unit_code = admin_units.account_unit(con,role,data)
                     new_password_hash = None
                     if password:
                         if len(password) < 6:
@@ -3571,6 +3559,7 @@ class Handler(BaseHTTPRequestHandler):
                         con, uid, username, role, unit_name, active, new_password_hash
                     )
 
+                    admin_units.assign_account(con,session["user_id"],uid,unit_code)
                     con.commit()
                     invalidate_user_sessions(uid)
 
@@ -3580,6 +3569,10 @@ class Handler(BaseHTTPRequestHandler):
                         "Đã cập nhật tài khoản."
                     )
 
+                except admin_units.CatalogError as exc:
+                    con.rollback()
+                    self.send_html(user_edit_page(session,user,str(exc)),exc.status)
+                    return
                 except INTEGRITY_ERRORS:
                     con.rollback()
 
@@ -3753,14 +3746,11 @@ def main():
         try:
             con_check = db_conn()
             tmp_count = con_check.execute("SELECT COUNT(*) FROM DM_DonViHanhChinh WHERE Ma_DonViHanhChinh LIKE 'TMP%'").fetchone()[0]
-            official_count = con_check.execute(
-                "SELECT COUNT(*) FROM DM_DonViHanhChinh WHERE Ma_DonViHanhChinh IN (?,?,?,?,?,?,?,?)",
-                tuple(code for code, _level in OFFICIAL_ADMIN_UNITS.values()),
-            ).fetchone()[0]
+            official_count = len(admin_units.units(con_check, active_only=True, communes_only=True))
             con_check.close()
             synced = sync_all_approved_records()
             print(f"Đã đồng bộ dữ liệu chuẩn từ {synced} báo cáo đã duyệt.")
-            print(f"Danh mục hành chính chính thức: {official_count}/8 đơn vị; mã TMP còn lại: {tmp_count}.")
+            print(f"Danh mục hành chính chính thức: {official_count} đơn vị; mã TMP còn lại: {tmp_count}.")
         except Exception as e:
             print(f"Cảnh báo: chưa đồng bộ được dữ liệu chuẩn: {e}")
     server=ThreadingHTTPServer((args.host,args.port),Handler)
