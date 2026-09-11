@@ -153,14 +153,35 @@ def _translate_boolean_literals(sql: str) -> str:
     """Adapt legacy SQLite boolean predicates to PostgreSQL booleans.
 
     The application schema defines ``active`` and ``TinhTrang`` as BOOLEAN. Some
-    mature handlers still use SQLite-style ``=1``/``=0`` predicates. Rewriting
-    those two known boolean columns at the connection boundary keeps the business
-    handlers unchanged while preventing PostgreSQL ``boolean = integer`` errors.
+    mature handlers still use SQLite-style ``=1``/``=0`` predicates. Rewrite only
+    SQL outside single-quoted string literals so literal text is never altered.
     """
     def replace(match: re.Match) -> str:
         return f"{match.group(1)}={'TRUE' if match.group(2) == '1' else 'FALSE'}"
 
-    return _BOOLEAN_LITERAL_RE.sub(replace, sql)
+    result: list[str] = []
+    start = 0
+    i = 0
+    in_string = False
+    while i < len(sql):
+        if sql[i] != "'":
+            i += 1
+            continue
+        if in_string and i + 1 < len(sql) and sql[i + 1] == "'":
+            i += 2
+            continue
+        if in_string:
+            result.append(sql[start:i + 1])
+            start = i + 1
+            in_string = False
+        else:
+            result.append(_BOOLEAN_LITERAL_RE.sub(replace, sql[start:i]))
+            start = i
+            in_string = True
+        i += 1
+    tail = sql[start:]
+    result.append(tail if in_string else _BOOLEAN_LITERAL_RE.sub(replace, tail))
+    return "".join(result)
 
 
 def translate_sql(sql: str) -> tuple[str, str | None]:
