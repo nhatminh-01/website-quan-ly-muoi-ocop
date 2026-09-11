@@ -512,6 +512,20 @@ class _Pages:
         if row.get("description"):
             content += '<h3 class="section-title">Thông tin giới thiệu</h3><p class="ocop-preserve">' + self.e(row["description"]) + "</p>"
         content += "</section>"
+        if kind == "products":
+            recognitions = self.con.execute(
+                "SELECT * FROM ocop_recognitions WHERE product_id=? ORDER BY recognition_round",
+                (row["id"],),
+            ).fetchall()
+            rec_rows = "".join(
+                '<tr><td>' + self.e(r["recognition_round"]) + '</td><td>'
+                + self.e(r["star"] or "—") + '</td><td>' + self.e(r["recognized_on"] or "—")
+                + '</td><td>' + self.e(r["decision_number"] or "—") + '</td><td>'
+                + self.e(r["issuing_authority"] or "—") + '</td><td>'
+                + self.e(r["expires_on"] or "—") + '</td></tr>'
+                for r in recognitions
+            ) or '<tr><td colspan="6"><div class="empty">Chưa có lịch sử công nhận.</div></td></tr>'
+            content += '<section class="card"><h2 class="ocop-section-heading">Lịch sử công nhận</h2><div class="table-wrap"><table class="summary-table ocop-table"><thead><tr><th>Lần</th><th>Sao</th><th>Ngày công nhận</th><th>Số quyết định</th><th>Cơ quan</th><th>Ngày hết hạn</th></tr></thead><tbody>' + rec_rows + '</tbody></table></div></section>'
         if kind == "applications":
             content += self.application_actions(row)
             content += self.history(row)

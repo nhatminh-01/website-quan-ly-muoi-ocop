@@ -78,6 +78,7 @@ class PostgreSQLSchemaTests(unittest.TestCase):
             "007_ocop_init_only.sql", "008_ocop_dynamic_criteria.sql",
             "009_staff_role.sql", "010_weekly_salt_imports.sql",
             "011_weekly_foundation.sql", "012_admin_units.sql",
+            "013_ocop_excel_import.sql",
         )
         with self.connection() as connection:
             for name in migration_names:
@@ -87,7 +88,7 @@ class PostgreSQLSchemaTests(unittest.TestCase):
                 "WHERE schema_name IN ('app','qd5277','staging')")}
             self.assertEqual(schemas, {"app", "qd5277", "staging"})
             self.assertEqual(connection.execute(
-                "SELECT COUNT(*) FROM app.schema_migrations").fetchone()[0], 9)
+                "SELECT COUNT(*) FROM app.schema_migrations").fetchone()[0], 10)
             self.assertEqual(connection.execute(
                 "SELECT COUNT(*) FROM qd5277.DN_SanLuongMuoi").fetchone()[0], 0)
             admin_id = connection.execute(

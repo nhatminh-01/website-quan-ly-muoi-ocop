@@ -183,7 +183,7 @@ def init_db():
     con = db_conn()
     try:
         if not repositories.postgres_application_ready(con):
-            raise RuntimeError("PostgreSQL chưa đủ schema ứng dụng. Áp dụng các migration database/sql đến 012_admin_units.sql trước.")
+            raise RuntimeError("PostgreSQL chưa đủ schema ứng dụng. Áp dụng các migration database/sql đến 013_ocop_excel_import.sql trước.")
     finally:
         con.close()
 
@@ -660,11 +660,14 @@ def base_page(title, body, session=None, active_path=None):
         nav_groups = [("TỔNG QUAN", [("/dashboard", "dashboard", "Bảng giám sát")]),
                       ("DIÊM NGHIỆP", salt_items)]
         if ocop_available():
-            nav_groups.append(("OCOP", [("/ocop", "dashboard", "Tổng quan OCOP"),
+            ocop_items = [("/ocop", "dashboard", "Tổng quan OCOP"),
                                         ("/ocop/products", "table", "Sản phẩm OCOP"),
                                         ("/ocop/entities", "home", "Chủ thể OCOP"),
                                         ("/ocop/applications", "file", "Hồ sơ đánh giá"),
-                                        ("/ocop/criteria", "table", "Bộ tiêu chí")]))
+                                        ("/ocop/criteria", "table", "Bộ tiêu chí")]
+            if is_chi_cuc_user(session):
+                ocop_items.insert(1, ("/ocop/import", "download", "Import dữ liệu OCOP"))
+            nav_groups.append(("OCOP", ocop_items))
         nav_groups.append(("HỆ THỐNG", system_items))
         nav = [sidebar_group(group, items, current) for group, items in nav_groups]
         name = account_display_name(session)
@@ -2460,14 +2463,31 @@ class Handler(BaseHTTPRequestHandler):
             return False
         import ocop_services as svc
         import ocop_pages
+        import ocop_excel_pages
         con = db_conn()
         active = "/".join(path.split("/")[:3]) if path != "/ocop" else path
         if path == "/ocop/access":
             active = "/users"
-        helpers = {"esc": esc, "csrf_input": csrf_input, "icon": icon}
+        helpers = {"esc": esc, "csrf_input": csrf_input, "csrf": csrf_input(session), "icon": icon}
         try:
             if not ocop_available(con):
                 raise svc.OcopError("Phân hệ OCOP chưa được khởi tạo trên cơ sở dữ liệu này.", 503)
+            if path in ("/ocop/import", "/ocop/import/preview"):
+                if not is_chi_cuc_user(session):
+                    raise svc.OcopError("Chỉ Chi cục được import OCOP.", 403)
+                if data is None:
+                    if path.endswith("/preview"):
+                        preview = session.get("ocop_import_preview")
+                        if not preview:
+                            self.redirect("/ocop/import")
+                            return True
+                        title, body = ocop_excel_pages.preview_page(preview, helpers)
+                    else:
+                        batches = con.execute("SELECT * FROM ocop_import_batches ORDER BY imported_at DESC LIMIT 20").fetchall()
+                        title, body = ocop_excel_pages.import_page(batches, helpers)
+                    body = body.replace('<div class="container ocop-page">', '<div class="container ocop-page">' + take_flash(session), 1)
+                    self.send_html(base_page(title, body, session, active_path="/ocop/import"))
+                    return True
             if path != "/ocop/access":
                 svc.get_scope(con, session)
             if data is None:
@@ -3064,11 +3084,13 @@ class Handler(BaseHTTPRequestHandler):
                 length = int(self.headers.get("Content-Length", "0"))
             except ValueError:
                 length = -1
-            if length < 0 or length > 256 * 1024 or self.headers.get("Transfer-Encoding"):
+            max_length = 20 * 1024 * 1024 if path == "/ocop/import" else 256 * 1024
+            if length < 0 or length > max_length or self.headers.get("Transfer-Encoding"):
                 self.close_connection = True
                 self.send_html(base_page("Yêu cầu không hợp lệ", '<div class="container">Dữ liệu gửi không hợp lệ hoặc quá lớn.</div>'), 413)
                 return
-            if not self.headers.get("Content-Type", "").lower().startswith("application/x-www-form-urlencoded"):
+            is_upload = path == "/ocop/import" and "multipart/form-data" in self.headers.get("Content-Type", "").lower()
+            if not is_upload and not self.headers.get("Content-Type", "").lower().startswith("application/x-www-form-urlencoded"):
                 self.close_connection = True
                 self.send_html(base_page("Yêu cầu không hợp lệ", '<div class="container">Định dạng biểu mẫu chưa được hỗ trợ.</div>'), 415)
                 return
@@ -3097,6 +3119,49 @@ class Handler(BaseHTTPRequestHandler):
         if not check_csrf(session,data): self.send_html(base_page("Lỗi","<div class='container'><div class='notice err'>Phiên làm việc không hợp lệ. Vui lòng tải lại trang.</div></div>",session),400); return
         if (path == "/users" or path.startswith("/users/") or path.rstrip("/") == "/ocop/access") and not can_manage_users(session):
             self.send_html(base_page("403", '<div class="container"><div class="notice err">Không có quyền quản lý tài khoản.</div></div>', session), 403)
+            return
+        if path == "/ocop/import":
+            if not is_chi_cuc_user(session):
+                self.send_html(base_page("403", '<div class="container"><div class="notice err">Không có quyền import OCOP.</div></div>', session), 403)
+                return
+            uploaded = uploaded_files.get("excel_file")
+            if not uploaded or not uploaded["filename"].lower().endswith(".xlsx"):
+                set_flash(session, "err", "Vui lòng chọn file .xlsx hợp lệ.")
+                self.redirect("/ocop/import")
+                return
+            from ocop_import import OcopImportError, parse_ocop_workbook
+            try:
+                session["ocop_import_preview"] = parse_ocop_workbook(uploaded["content"], uploaded["filename"])
+            except OcopImportError as exc:
+                set_flash(session, "err", str(exc))
+                self.redirect("/ocop/import")
+                return
+            self.redirect("/ocop/import/preview")
+            return
+        if path == "/ocop/import/confirm":
+            if not is_chi_cuc_user(session):
+                self.send_html(base_page("403", '<div class="container"><div class="notice err">Không có quyền import OCOP.</div></div>', session), 403)
+                return
+            preview = session.get("ocop_import_preview")
+            if not preview:
+                set_flash(session, "err", "Dữ liệu xem trước đã hết hạn. Hãy chọn lại file.")
+                self.redirect("/ocop/import")
+                return
+            from ocop_import import OcopImportError, commit_ocop_preview
+            con = db_conn()
+            try:
+                con.execute("BEGIN")
+                result = commit_ocop_preview(con, session, preview, now_text())
+                con.commit()
+            except OcopImportError as exc:
+                con.rollback(); set_flash(session, "err", str(exc)); self.redirect("/ocop/import/preview"); return
+            except INTEGRITY_ERRORS:
+                con.rollback(); set_flash(session, "err", "Dữ liệu OCOP trùng hoặc không hợp lệ."); self.redirect("/ocop/import/preview"); return
+            finally:
+                con.close()
+            session.pop("ocop_import_preview", None)
+            set_flash(session, "ok", f"Đã import OCOP: {result['inserted']} mới, {result['updated']} cập nhật.")
+            self.redirect("/ocop/products")
             return
         if self.handle_admin_units(path, parsed.query, session, data):
             return

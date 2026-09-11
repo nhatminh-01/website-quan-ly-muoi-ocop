@@ -82,6 +82,8 @@ def postgres_application_ready(con):
         "user_admin_units", "ocop_entities", "ocop_products", "ocop_applications",
         "ocop_reviews", "ocop_criteria_sets", "ocop_criteria", "ocop_criteria_options",
         "salt_import_batches", "salt_weekly_records", "admin_unit_aliases",
+        "ocop_recognitions", "ocop_import_batches", "ocop_import_errors",
+        "admin_unit_code_mapping",
     }
     rows = con.execute(
         """SELECT table_name FROM information_schema.tables

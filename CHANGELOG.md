@@ -15,6 +15,8 @@ Tài liệu này ghi lại các thay đổi đáng chú ý của hệ thống Qu
 - Chốt máy cộng tác viên `192.168.1.38`; giới hạn hướng dẫn `pg_hba.conf` và Firewall theo đúng IP này, đồng thời bổ sung URL web LAN `http://192.168.1.41:8080`.
 - Sửa dashboard PostgreSQL tự tính tổng tiêu thụ và tồn kho từ hai loại nền, tránh lỗi `KeyError` sau đăng nhập.
 - Làm rõ mật khẩu role nhóm chỉ được lưu trong `database/.env` cục bộ và gửi riêng; file mẫu/tài liệu không chứa credential thật.
+- Thêm migration 013 cho import Excel OCOP: mã tạm chủ thể/sản phẩm/xã-phường, lịch sử công nhận, batch/lỗi import và đồng bộ `qd5277.PTNT_OCOP`.
+- Thêm menu **OCOP → Import dữ liệu OCOP** với preview, chống import lặp theo hash file; danh sách sản phẩm OCOP đọc được dữ liệu đã import và chi tiết các lần công nhận.
 
 ## Chưa phát hành — Đồng bộ quy tắc nền sản xuất muối
 

@@ -61,6 +61,7 @@ Stop-Service -Name 'postgresql-x64-17'
 & 'C:\Program Files\PostgreSQL\17\bin\psql.exe' -h localhost -p 5432 -U postgres -d ptnt_qd5277_dev -f sql\010_weekly_salt_imports.sql
 & 'C:\Program Files\PostgreSQL\17\bin\psql.exe' -v ON_ERROR_STOP=1 -h localhost -p 5432 -U postgres -d ptnt_qd5277_dev -f sql\011_weekly_foundation.sql
 & 'C:\Program Files\PostgreSQL\17\bin\psql.exe' -v ON_ERROR_STOP=1 -h localhost -p 5432 -U postgres -d ptnt_qd5277_dev -f sql\012_admin_units.sql
+& 'C:\Program Files\PostgreSQL\17\bin\psql.exe' -v ON_ERROR_STOP=1 -h localhost -p 5432 -U postgres -d ptnt_qd5277_dev -f sql\013_ocop_excel_import.sql
 ```
 
 Migration 012 dùng `qd5277.DM_DonViHanhChinh` làm danh mục chung, thêm Xã Tân Nhựt
@@ -71,6 +72,21 @@ Server kiểm tra schema đã nâng cấp; không tự seed danh mục PostgreSQ
 
 Sau khi hoàn tất schema, máy chủ có thể tạo role dùng chung cho nhóm bằng
 `sql\team_role_setup.sql`. Xem [hướng dẫn kết nối nhóm](../POSTGRESQL_TEAM_GUIDE.md).
+
+Migration 013 bổ sung lớp `app` cho import OCOP (`ocop_import_batches`,
+`ocop_import_errors`, `ocop_recognitions`, `admin_unit_code_mapping`). Mã OCOP và
+mã xã/phường phát sinh từ Excel đều là mã tạm, không thay đổi cấu trúc `qd5277`.
+Sau import, mỗi sản phẩm được đồng bộ một dòng hiện tại vào `qd5277.PTNT_OCOP`.
+
+Trong website, tài khoản Chi cục mở **OCOP → Import dữ liệu OCOP**, chọn workbook
+`.xlsx`, kiểm tra preview rồi xác nhận import. **OCOP → Sản phẩm OCOP** cho phép
+lọc theo xã/phường và mở chi tiết lịch sử công nhận.
+
+Có thể chạy cùng importer từ dòng lệnh (dùng tài khoản đã có trong `app.users`):
+
+```powershell
+.\.venv\Scripts\python.exe etl\import_ocop.py --workbook "D:\TaiLieu\PTNT\CCPTNT OCOP.xlsx" --user-id 1
+```
 
 Kết nối thủ công:
 

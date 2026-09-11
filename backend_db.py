@@ -106,6 +106,9 @@ _IDENTITY_TABLES = {
     "ocop_criteria_options",
     "salt_import_batches",
     "salt_weekly_records",
+    "ocop_import_batches",
+    "ocop_import_errors",
+    "ocop_recognitions",
 }
 
 _BOOLEAN_LITERAL_RE = re.compile(

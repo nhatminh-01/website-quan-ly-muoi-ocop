@@ -27,6 +27,7 @@ MIGRATIONS = (
     "010_weekly_salt_imports.sql",
     "011_weekly_foundation.sql",
     "012_admin_units.sql",
+    "013_ocop_excel_import.sql",
 )
 
 
