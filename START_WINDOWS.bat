@@ -26,5 +26,5 @@ if errorlevel 1 (
   pause
   exit /b 1
 )
-"%PYTHON_EXE%" server.py
+"%PYTHON_EXE%" server_t2.py
 pause
