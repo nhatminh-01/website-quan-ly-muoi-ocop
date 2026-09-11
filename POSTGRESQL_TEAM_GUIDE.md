@@ -23,13 +23,21 @@ Trong màn hình `psql`, đặt mật khẩu dùng chung rồi thoát:
 \q
 ```
 
-Trong `C:\Program Files\PostgreSQL\17\data\pg_hba.conf`, thêm một dòng với IP thật của máy cộng tác viên:
+Trong `C:\Program Files\PostgreSQL\17\data\pg_hba.conf`, cho phép đúng máy cộng tác viên `192.168.1.38`:
 
 ```text
-host  ptnt_qd5277_dev  ptnt_team  IP_MAY_CONG_TAC_VIEN/32  scram-sha-256
+host  ptnt_qd5277_dev  ptnt_team  192.168.1.38/32  scram-sha-256
 ```
 
-Khởi động lại service `postgresql-x64-17`. Tạo Windows Firewall inbound rule TCP 5432, profile Private, chỉ cho IP cộng tác viên. Máy chủ nên được giữ IP cố định `192.168.1.41` bằng DHCP reservation.
+Reload PostgreSQL, rồi mở **PowerShell bằng Run as administrator** để tạo hai Firewall rule giới hạn đúng IP cộng tác viên:
+
+```powershell
+& "C:\Program Files\PostgreSQL\17\bin\psql.exe" -U postgres -d postgres -c "SELECT pg_reload_conf();"
+New-NetFirewallRule -DisplayName "PTNT PostgreSQL 5432 from 192.168.1.38" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 5432 -RemoteAddress 192.168.1.38 -Profile Private
+New-NetFirewallRule -DisplayName "PTNT Web 8080 from 192.168.1.38" -Direction Inbound -Action Allow -Protocol TCP -LocalPort 8080 -RemoteAddress 192.168.1.38 -Profile Private
+```
+
+Máy chủ nên được giữ IP cố định `192.168.1.41` bằng DHCP reservation.
 
 ## 2. Cài trên máy cộng tác viên
 
@@ -50,6 +58,14 @@ Mở `database/.env`, thay `CHANGE_ME` bằng mật khẩu `ptnt_team` được 
 .\database\.venv\Scripts\python.exe -c "from backend_db import healthcheck; print(healthcheck())"
 .\START_WINDOWS.bat
 ```
+
+Sau khi máy chủ đã chạy web, cộng tác viên cùng LAN mở:
+
+```text
+http://192.168.1.41:8080
+```
+
+`192.168.1.41` là IP máy chủ web/database; `192.168.1.38` là IP máy cộng tác viên được cấp quyền truy cập.
 
 Kết nối DBeaver dùng cùng thông tin:
 

@@ -12,6 +12,8 @@ Tài liệu này ghi lại các thay đổi đáng chú ý của hệ thống Qu
 - Cấu hình cục bộ chỉ đọc `database/.env`; không còn fallback sang cấu hình hoặc database ngoài repository.
 - Hòa tính năng danh mục đơn vị hành chính từ `main` vào backend PostgreSQL-only; migration 012 bổ sung alias và Xã Tân Nhựt, không khôi phục launcher hay migration SQLite.
 - Kiểm thử tích hợp dựng mới toàn bộ migration PostgreSQL 002–012 và xác nhận thao tác quản trị danh mục trong transaction.
+- Chốt máy cộng tác viên `192.168.1.38`; giới hạn hướng dẫn `pg_hba.conf` và Firewall theo đúng IP này, đồng thời bổ sung URL web LAN `http://192.168.1.41:8080`.
+- Sửa dashboard PostgreSQL tự tính tổng tiêu thụ và tồn kho từ hai loại nền, tránh lỗi `KeyError` sau đăng nhập.
 
 ## Chưa phát hành — Đồng bộ quy tắc nền sản xuất muối
 
