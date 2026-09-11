@@ -9,6 +9,14 @@ import ocop_services
 from permissions import is_chi_cuc_user
 
 
+EVALUATION_LABELS = {
+    "new": "Đánh giá lần đầu",
+    "re_evaluation": "Đánh giá lại",
+    "upgrade": "Nâng hạng",
+    "historical": "Lịch sử",
+}
+
+
 def _e(value):
     return escape("" if value is None else str(value), quote=True)
 
@@ -22,7 +30,14 @@ def _one(params, key, default=""):
 
 def _status_badge(status):
     label = {"published": "Đã đồng bộ", "committed": "Đã lưu staging"}.get(status, status)
-    return f'<span class="ocop-status ocop-status-{"eligible" if status == "published" else "checking"}">{_e(label)}</span>'
+    tone = "eligible" if status == "published" else "checking"
+    return f'<span class="ocop-status ocop-status-{tone}">{_e(label)}</span>'
+
+
+def _current_badge(is_current):
+    if not is_current:
+        return ""
+    return '<span class="ocop-status ocop-status-eligible">Hiện hành</span>'
 
 
 def import_page(session, con, helpers):
@@ -67,16 +82,21 @@ def preview_page(session, preview, helpers):
     if unknown:
         chips = "".join(f'<span class="ocop-status ocop-status-returned">{_e(name)}</span> ' for name in unknown[:80])
         more = f"<p class='muted'>Còn {len(unknown)-80} địa bàn khác.</p>" if len(unknown) > 80 else ""
-        unknown_html = f'''<section class="card"><div class="ocop-detail-heading"><h2 class="ocop-section-heading">Địa bàn chưa ánh xạ ({len(unknown)})</h2><a class="btn small" href="/admin-units">Mở danh mục đơn vị</a></div><p>{chips}</p>{more}</section>'''
+        unknown_html = (
+            f'<section class="card"><div class="ocop-detail-heading"><h2 class="ocop-section-heading">'
+            f'Địa bàn chưa ánh xạ ({len(unknown)})</h2><a class="btn small" href="/admin-units">Mở danh mục đơn vị</a>'
+            f'</div><p>{chips}</p>{more}</section>'
+        )
 
     issue_rows = []
     for row in preview["rows"]:
         if row["status"] == "valid":
             continue
         messages = row["errors"] + row["warnings"]
+        message_html = "<br>".join(_e(item) for item in messages)
         issue_rows.append(
             f"<tr><td>{row['excel_row']}</td><td>{_e(row['source_tt'])}</td><td>{_e(row['canonical']['product']['name'])}</td>"
-            f"<td>{_e(row['source_unit_name'])}</td><td>{_e(row['status'])}</td><td>{'<br>'.join(_e(x) for x in messages)}</td></tr>"
+            f"<td>{_e(row['source_unit_name'])}</td><td>{_e(row['status'])}</td><td>{message_html}</td></tr>"
         )
         if len(issue_rows) >= 100:
             break
@@ -125,21 +145,27 @@ def recognitions_page(session, con, query, helpers):
     if page > pages:
         page = pages
     shown = rows[(page - 1) * page_size:page * page_size]
+
     unit_options = ""
     if is_chi_cuc_user(session):
         options = ['<option value="">Tất cả đơn vị</option>']
         for item in ocop_services.unit_options(con, session):
             selected = " selected" if item["code"] == filters["unit"] else ""
             options.append(f'<option value="{_e(item["code"])}"{selected}>{_e(item["name"])}</option>')
-        unit_options = f'<div class="field"><label>Đơn vị</label><select name="unit">{"".join(options)}</select></div>'
-    table_rows = "".join(
-        f"<tr><td>{_e(r['unit_name'])}</td><td><a href='/ocop/products/{r['product_id']}'>{_e(r['ten_san_pham'])}</a></td>"
-        f"<td>{_e(r['entity_name'])}</td><td>{r['recognition_sequence']}</td><td>{_e(r['evaluation_type'])}</td>"
-        f"<td>{r['star_rank']} sao</td><td>{_e(r['recognition_date'] or '')}</td><td>{r['recognition_year']}</td>"
-        f"<td>{_e(r['decision_number'])}</td><td>{_e(r['decision_authority'])}</td><td>{_e(r['expiry_date'] or '')}</td>"
-        f"<td>{'<span class=\"ocop-status ocop-status-eligible\">Hiện hành</span>' if r['is_current'] else ''}</td></tr>"
-        for r in shown
-    ) or '<tr><td colspan="12" class="empty">Chưa có lịch sử công nhận OCOP.</td></tr>'
+        option_html = "".join(options)
+        unit_options = f'<div class="field"><label>Đơn vị</label><select name="unit">{option_html}</select></div>'
+
+    rendered_rows = []
+    for r in shown:
+        rendered_rows.append(
+            f"<tr><td>{_e(r['unit_name'])}</td><td><a href='/ocop/products/{r['product_id']}'>{_e(r['ten_san_pham'])}</a></td>"
+            f"<td>{_e(r['entity_name'])}</td><td>{r['recognition_sequence']}</td><td>{_e(EVALUATION_LABELS.get(r['evaluation_type'], r['evaluation_type']))}</td>"
+            f"<td>{r['star_rank']} sao</td><td>{_e(r['recognition_date'] or '')}</td><td>{r['recognition_year']}</td>"
+            f"<td>{_e(r['decision_number'])}</td><td>{_e(r['decision_authority'])}</td><td>{_e(r['expiry_date'] or '')}</td>"
+            f"<td>{_current_badge(r['is_current'])}</td></tr>"
+        )
+    table_rows = "".join(rendered_rows) or '<tr><td colspan="12" class="empty">Chưa có lịch sử công nhận OCOP.</td></tr>'
+
     nav = []
     for target, label in ((page - 1, "← Trước"), (page + 1, "Sau →")):
         if 1 <= target <= pages:
@@ -147,6 +173,7 @@ def recognitions_page(session, con, query, helpers):
             q["page"] = target
             nav.append(f'<a class="btn small" href="/ocop/recognitions?{urlencode(q)}">{label}</a>')
     import_action = '<a class="btn primary" href="/ocop/import">Import Excel OCOP</a>' if is_chi_cuc_user(session) else ""
+    nav_html = "".join(nav)
     body = f"""
     <div class="container ocop-page">{helpers['take_flash'](session)}
       <div class="page-head"><div><div class="ocop-breadcrumb"><a href="/ocop">OCOP</a></div><h1>Lịch sử công nhận OCOP</h1>
@@ -158,7 +185,7 @@ def recognitions_page(session, con, query, helpers):
       </form></div>
       <div class="card"><div class="ocop-detail-heading"><h2 class="ocop-section-heading">{total} lần công nhận</h2><span class="muted">Trang {page}/{pages}</span></div>
         <div class="table-wrap"><table class="summary-table"><thead><tr><th>Đơn vị</th><th>Sản phẩm</th><th>Chủ thể</th><th>Lần</th><th>Loại</th><th>Hạng</th><th>Ngày công nhận</th><th>Năm</th><th>Số QĐ</th><th>Cơ quan QĐ</th><th>Hết hạn</th><th>Trạng thái</th></tr></thead><tbody>{table_rows}</tbody></table></div>
-        <div class="actions" style="margin-top:12px">{''.join(nav)}</div>
+        <div class="actions" style="margin-top:12px">{nav_html}</div>
       </div>
     </div>"""
     return "Lịch sử công nhận OCOP", body, 200
@@ -171,11 +198,17 @@ def product_history_section(con, session, product_id):
         return ""
     if not rows:
         return ""
-    table_rows = "".join(
-        f"<tr><td>{r['recognition_sequence']}</td><td>{_e(r['evaluation_type'])}</td><td>{r['star_rank']} sao</td>"
-        f"<td>{_e(r['recognition_date'] or '')}</td><td>{r['recognition_year']}</td><td>{_e(r['decision_number'])}</td>"
-        f"<td>{_e(r['decision_authority'])}</td><td>{_e(r['expiry_date'] or '')}</td>"
-        f"<td>{'<span class=\"ocop-status ocop-status-eligible\">Hiện hành</span>' if r['is_current'] else ''}</td></tr>"
-        for r in rows
+    rendered_rows = []
+    for r in rows:
+        rendered_rows.append(
+            f"<tr><td>{r['recognition_sequence']}</td><td>{_e(EVALUATION_LABELS.get(r['evaluation_type'], r['evaluation_type']))}</td><td>{r['star_rank']} sao</td>"
+            f"<td>{_e(r['recognition_date'] or '')}</td><td>{r['recognition_year']}</td><td>{_e(r['decision_number'])}</td>"
+            f"<td>{_e(r['decision_authority'])}</td><td>{_e(r['expiry_date'] or '')}</td><td>{_current_badge(r['is_current'])}</td></tr>"
+        )
+    table_rows = "".join(rendered_rows)
+    return (
+        '<section class="card"><div class="ocop-detail-heading"><h2 class="ocop-section-heading">LỊCH SỬ CÔNG NHẬN</h2>'
+        '<a class="btn small" href="/ocop/recognitions">Tra cứu toàn bộ</a></div>'
+        '<div class="table-wrap"><table class="summary-table"><thead><tr><th>Lần</th><th>Loại</th><th>Hạng</th><th>Ngày công nhận</th><th>Năm</th><th>Số QĐ</th><th>Cơ quan QĐ</th><th>Hết hạn</th><th>Trạng thái</th></tr></thead>'
+        f'<tbody>{table_rows}</tbody></table></div></section>'
     )
-    return f'''<section class="card"><div class="ocop-detail-heading"><h2 class="ocop-section-heading">LỊCH SỬ CÔNG NHẬN</h2><a class="btn small" href="/ocop/recognitions">Tra cứu toàn bộ</a></div><div class="table-wrap"><table class="summary-table"><thead><tr><th>Lần</th><th>Loại</th><th>Hạng</th><th>Ngày công nhận</th><th>Năm</th><th>Số QĐ</th><th>Cơ quan QĐ</th><th>Hết hạn</th><th>Trạng thái</th></tr></thead><tbody>{table_rows}</tbody></table></div></section>'''
