@@ -257,6 +257,8 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
             self.assertEqual(dashboard["previous"]["week_code"], "2026-W34")
             self.assertEqual(len(dashboard["rows"]), 1)
             self.assertEqual(len(dashboard["previous_rows"]), 1)
+            self.assertEqual(float(dashboard["rows"][0]["sold_total"]), 15.0)
+            self.assertEqual(float(dashboard["rows"][0]["remaining_total"]), 30.0)
         finally:
             con.close()
 
