@@ -50,7 +50,7 @@ python -m venv database\.venv
 Copy-Item database\.env.example database\.env
 ```
 
-Mở `database/.env`, thay `CHANGE_ME` bằng mật khẩu `ptnt_team` được gửi riêng. Không cần tải bất kỳ file `.db` nào.
+Mở **file vừa sao chép** `database/.env`, thay `CHANGE_ME` bằng mật khẩu `ptnt_team` được gửi qua kênh riêng. Không sửa `database/.env.example`, không ghi mật khẩu vào tài liệu/commit và không cần tải bất kỳ file `.db` nào.
 
 ## 3. Kiểm tra kết nối và chạy web
 
