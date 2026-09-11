@@ -185,8 +185,8 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
         try:
             admin_id = self.create_user(con, "ocop_admin", "admin")
             unit_id = self.create_user(con, "ocop_unit", "unit", "27595")
-            admin_session = {"user_id": admin_id, "role": "admin", "unit_name": "Chi cục"}
-            unit_session = {"user_id": unit_id, "role": "unit", "unit_name": "Xã Tân Nhựt"}
+            admin_session = {"user_id": admin_id, "role": "admin", "unit_name": "Chi cục", "csrf": "test-csrf"}
+            unit_session = {"user_id": unit_id, "role": "unit", "unit_name": "Xã Tân Nhựt", "csrf": "test-csrf"}
 
             admin_units_rows = ocop_services.unit_options(con, admin_session)
             self.assertTrue(any(row["code"] == "27595" for row in admin_units_rows))
