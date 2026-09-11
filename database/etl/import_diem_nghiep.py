@@ -22,7 +22,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from database.etl.mappings import TIME_CODE, lookup_admin_code
 from salt_normalization import sync_methods, method_values
-from backend_db import CompatConnection
+from backend_db import CompatConnection, hybrid_row
 
 
 SHEET_NAME = "21.8-Tuan 34"
@@ -105,7 +105,7 @@ def import_workbook(workbook_path: Path) -> tuple[int, int]:
         + ", imported_at = CURRENT_TIMESTAMP"
     )
 
-    with psycopg.connect(**connection_kwargs()) as conn:
+    with psycopg.connect(**connection_kwargs(), row_factory=hybrid_row) as conn:
         with conn.cursor() as cur:
             target_count = 0
             cur.execute("INSERT INTO qd5277.DM_KhoangThoiGian(Ma_ThoiGian,Nam,Thang) VALUES(%s,2026,8) ON CONFLICT(Ma_ThoiGian) DO NOTHING", (TIME_CODE,))
