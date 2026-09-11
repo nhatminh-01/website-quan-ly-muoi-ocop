@@ -15,6 +15,7 @@ from unittest.mock import patch
 from uuid import uuid4
 
 import server
+import admin_units
 import backend_db
 import ocop_db
 import ocop_services as svc
@@ -22,6 +23,7 @@ from weekly_import import WeeklyImportError, parse_weekly_workbook, commit_weekl
 from database.migration import migrate_sqlite_to_postgres as migration
 from test_integration import legacy_schema, Client
 from test_weekly_foundation import preview, exercise_effective_weeks
+from test_admin_units import exercise_catalog_http
 
 
 class PostgreSQLTranslationTests(unittest.TestCase):
@@ -45,7 +47,7 @@ class PostgreSQLBackendTests(unittest.TestCase):
             for name in ('002_qd5277_schema.sql','004_app_schema.sql','005_monthly_salt_sync.sql',
                          '006_official_admin_units.sql','007_ocop_init_only.sql',
                          '008_ocop_dynamic_criteria.sql','009_staff_role.sql',
-                         '010_weekly_salt_imports.sql','011_weekly_foundation.sql'):
+                         '010_weekly_salt_imports.sql','011_weekly_foundation.sql','012_admin_units.sql'):
                 con.execute((Path(server.__file__).parent/'database/sql'/name).read_text(encoding='utf-8'))
         self.temp=tempfile.TemporaryDirectory(prefix='ocop-pg-source-')
         self.addCleanup(self.temp.cleanup)
@@ -141,7 +143,7 @@ class PostgreSQLBackendTests(unittest.TestCase):
         from database.etl import import_diem_nghiep as etl
         workbook=Path(self.temp.name)/'fixture.xlsx'
         wb=Workbook();ws=wb.active;ws.title=etl.SHEET_NAME
-        for row,name in zip(etl.DATA_ROWS,server.UNITS):
+        for row,name in zip(etl.DATA_ROWS,('Xã An Thới Đông','Xã Thạnh An','Xã Cần Giờ','Xã Long Điền','Xã Long Sơn','Phường Phước Thắng','Phường Long Hương','Phường Bà Rịa')):
             ws.cell(row,2,name)
             # C/F deliberately disagree: standard values must be D+E / G+H.
             for col,value in ((3,999),(4,2),(5,3),(6,9999),(7,10),(8,20),(20,1200),(21,'2.000 - 2.500')):
@@ -171,10 +173,10 @@ class PostgreSQLBackendTests(unittest.TestCase):
         self.migrate()
         with self.connection(autocommit=True) as raw:
             con=backend_db.CompatConnection(raw)
-            a=preview('2026-08-21','winning')
+            a=preview('2026-08-21','winning',lookup=admin_units.unit_lookup(con))
             a['rows'][0]['canonical'].update(sold_total=501,remaining_total=499,dien_tich=999,san_luong=9999)
             commit_weekly_preview(con,{'user_id':1},a,'skip','date')
-            commit_weekly_preview(con,{'user_id':1},preview('2026-08-22','skipped',9),'skip','date')
+            commit_weekly_preview(con,{'user_id':1},preview('2026-08-22','skipped',9,lookup=admin_units.unit_lookup(con)),'skip','date')
             con.commit()
             raw.execute('ALTER TABLE app.salt_weekly_records DROP COLUMN sold_total, DROP COLUMN remaining_total')
             raw.execute((Path(server.__file__).parent/'database/sql/010_weekly_salt_imports.sql').read_text(encoding='utf-8'))
@@ -201,7 +203,9 @@ class PostgreSQLBackendTests(unittest.TestCase):
             row[2]=5;row[3]=2;row[4]=3;row[5]=30;row[6]=10;row[7]=20
             ws.append(row)
         wb.save(workbook);wb.close()
-        preview=parse_weekly_workbook(workbook.read_bytes(),'2026-08-21','Tuan 34',workbook.name,server.canonical_admin_unit)
+        with self.connection() as raw:
+            lookup=admin_units.unit_lookup(backend_db.CompatConnection(raw))
+        preview=parse_weekly_workbook(workbook.read_bytes(),'2026-08-21','Tuan 34',workbook.name,lookup)
         self.assertEqual((preview['week_code'],preview['error_rows']),('2026-W34',0))
         with self.connection() as raw:
             con=backend_db.CompatConnection(raw)
@@ -258,6 +262,33 @@ class PostgreSQLBackendTests(unittest.TestCase):
         self.assertNotIn('Tài khoản không hoạt động.',unit.request('POST','/login',{'username':'unit_a','password':'bad'})[2].decode())
         self.assertEqual(admin.request('POST','/users/2/activate',{})[0],303)
         unit.login('unit_a')
+
+    def test_postgres_admin_catalog_account_mapping_and_weekly_http(self):
+        admin,staff,unit=self.start_http()
+        exercise_catalog_http(self,admin,staff,unit,
+                              lambda:backend_db.CompatConnection(self.connection(autocommit=True)))
+
+    def test_admin_catalog_migration_repeat_preserves_existing_units_and_source(self):
+        self.migrate()
+        upgrade=(Path(server.__file__).parent/'database/sql/012_admin_units.sql').read_text(encoding='utf-8')
+        with self.connection(autocommit=True) as con:
+            before={table:con.execute('SELECT * FROM '+table+' ORDER BY id').fetchall() for table in
+                    ('app.users','app.records','app.ocop_applications','app.salt_weekly_records')}
+            con.execute("UPDATE DM_DonViHanhChinh SET TenDonVi='Tên quản trị giữ lại',TinhTrang=FALSE WHERE Ma_DonViHanhChinh='27595'")
+            con.execute(upgrade)
+            con.execute(upgrade)
+            row=con.execute("SELECT TenDonVi,TinhTrang,Ma_DonViCapTren FROM DM_DonViHanhChinh WHERE Ma_DonViHanhChinh='27595'").fetchone()
+            self.assertEqual(tuple(row.values()),('Tên quản trị giữ lại',False,'79'))
+            self.assertEqual(before,{table:con.execute('SELECT * FROM '+table+' ORDER BY id').fetchall() for table in before})
+
+    def test_postgres_startup_reads_catalog_without_seeding_or_reactivating(self):
+        self.migrate()
+        with self.connection() as con:
+            con.execute("UPDATE DM_DonViHanhChinh SET TinhTrang=FALSE WHERE Ma_DonViHanhChinh='27595'")
+        with patch.object(server,'using_postgres',return_value=True), patch.object(server,'db_conn',lambda:backend_db.CompatConnection(self.connection(autocommit=True))):
+            server.init_db()
+        with self.connection() as con:
+            self.assertFalse(con.execute("SELECT TinhTrang FROM DM_DonViHanhChinh WHERE Ma_DonViHanhChinh='27595'").fetchone()[0])
 
     def test_postgres_http_ocop_mutations_commit_and_snapshot_dates_serialize(self):
         admin,staff,unit=self.start_http()

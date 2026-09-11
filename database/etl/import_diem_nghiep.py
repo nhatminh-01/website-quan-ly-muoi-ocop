@@ -22,6 +22,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from database.etl.mappings import TIME_CODE, lookup_admin_code
 from salt_normalization import sync_methods, method_values
+from backend_db import CompatConnection
 
 
 SHEET_NAME = "21.8-Tuan 34"
@@ -108,7 +109,7 @@ def import_workbook(workbook_path: Path) -> tuple[int, int]:
         with conn.cursor() as cur:
             target_count = 0
             cur.execute("INSERT INTO qd5277.DM_KhoangThoiGian(Ma_ThoiGian,Nam,Thang) VALUES(%s,2026,8) ON CONFLICT(Ma_ThoiGian) DO NOTHING", (TIME_CODE,))
-            cur.execute("SET LOCAL search_path=qd5277,staging,public")
+            cur.execute("SET LOCAL search_path=app,qd5277,staging,public")
             for row in DATA_ROWS:
                 raw_values: list[Any] = []
                 kinds: dict[str, dict[str, str]] = {}
@@ -142,7 +143,7 @@ def import_workbook(workbook_path: Path) -> tuple[int, int]:
                     observation["price_" + suffix] = ws_cached.cell(row,price_col).value
                 def execute(query, params):
                     return cur.execute(query.replace("?", "%s"), params)
-                sync_methods(execute,lookup_admin_code(ws_cached.cell(row,2).value),TIME_CODE,observation,postgres=True)
+                sync_methods(execute,lookup_admin_code(CompatConnection(conn),ws_cached.cell(row,2).value),TIME_CODE,observation,postgres=True)
                 target_count += len(list(method_values(observation)))
         conn.commit()
 

@@ -1,41 +1,11 @@
-"""Official administrative mappings for the Diem nghiep validation import."""
-
-from __future__ import annotations
-
-import re
-import unicodedata
-
+"""Administrative lookup for the legacy Excel snapshot, using the shared catalog."""
+from admin_units import normalize as normalize_label, unit_lookup
 
 TIME_CODE = "2026-08"
-PRODUCTION_METHOD = "Truyền thống"
-
-OFFICIAL_ADMIN_CODES = {
-    "Xã An Thới Đông": "27673",
-    "Xã An Thời Đông": "27673",  # Alias typo trong workbook nguồn.
-    "Xã Thạnh An": "27676",
-    "Xã Cần Giờ": "27664",
-    "Xã Long Điền": "26659",
-    "Xã Long Sơn": "26545",
-    "Phường Phước Thắng": "26542",
-    "Phường Long Hương": "26566",
-    "Phường Bà Rịa": "26560",
-}
 
 
-def normalize_label(value: object) -> str:
-    """Normalize Unicode and whitespace without removing Vietnamese diacritics."""
-    text = unicodedata.normalize("NFC", str(value or ""))
-    return re.sub(r"\s+", " ", text).strip().casefold()
-
-
-ADMIN_CODE_BY_NORMALIZED_NAME = {
-    normalize_label(name): code for name, code in OFFICIAL_ADMIN_CODES.items()
-}
-
-
-def lookup_admin_code(name: object) -> str:
-    key = normalize_label(name)
-    try:
-        return ADMIN_CODE_BY_NORMALIZED_NAME[key]
-    except KeyError as exc:
-        raise ValueError(f"Chưa có mapping địa bàn: {name!r}") from exc
+def lookup_admin_code(con, name):
+    unit = unit_lookup(con)(name)
+    if unit is None:
+        raise ValueError(f"Chưa có xã/phường hoạt động trong danh mục: {name!r}")
+    return unit[1]

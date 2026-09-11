@@ -76,4 +76,21 @@
       button.textContent = button.dataset.loadingText || 'Đang xử lý...';
     });
   });
+  document.querySelectorAll('form select[name="role"]').forEach(role => {
+    const form = role.closest('form');
+    const syncUnitFields = () => {
+      const isUnit = role.value === 'unit';
+      for (const [selector, visible] of [['[data-unit-field]', isUnit], ['[data-office-field]', !isUnit]]) {
+        const field = form.querySelector(selector);
+        if (!field) continue;
+        field.hidden = !visible;
+        field.querySelectorAll('input, select').forEach(input => {
+          input.disabled = !visible;
+          input.required = visible;
+        });
+      }
+    };
+    role.addEventListener('change', syncUnitFields);
+    syncUnitFields();
+  });
 })();

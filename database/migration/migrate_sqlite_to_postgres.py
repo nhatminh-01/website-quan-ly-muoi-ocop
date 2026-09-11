@@ -14,12 +14,14 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from backend_db import connect, CompatConnection
 from salt_normalization import sync_methods
+from admin_units import unit_lookup
 
 DEFAULT_SOURCE = ROOT / 'salt_management.db'
 # Dependency order, primary key, and identity fields used to reject ID collisions.
 TABLES = (
     ('DM_DonViHanhChinh', 'qd5277', 'Ma_DonViHanhChinh', ()),
     ('DM_KhoangThoiGian', 'qd5277', 'Ma_ThoiGian', ()),
+    ('admin_unit_aliases', 'app', 'alias', ('unit_code',)),
     ('users', 'app', 'id', ('username',)),
     ('DM_SanPham', 'qd5277', 'Ma_SanPham', ()),
     ('DM_CoSo', 'qd5277', 'Ma_CoSo', ()),
@@ -87,13 +89,11 @@ def copy_table(target, name, schema, key, identity, rows):
         row = {k.lower(): v for k, v in raw.items()}
         if name == 'users':
             password = row.pop('password_hash')
-            from server import canonical_admin_unit
-            canonical = canonical_admin_unit(row.get('unit_name'))
+            canonical = unit_lookup(CompatConnection(target), active_only=False)(row.get('unit_name'))
             if canonical and row['role'] == 'unit':
                 row['unit_name'] = canonical[0]
         if name == 'records':
-            from server import canonical_admin_unit
-            canonical = canonical_admin_unit(row['unit_name'])
+            canonical = unit_lookup(CompatConnection(target), active_only=False)(row['unit_name'])
             if not canonical:
                 raise RuntimeError('Unknown administrative unit in report: ' + row['unit_name'])
             row.update(unit_name=canonical[0], ma_don_vi_hanh_chinh=canonical[1])
@@ -157,9 +157,8 @@ def migrate(source_path, *, target=None, dry_run=False):
                     rows = parent_first(rows,key,'parent_id')
                 copy_table(target,name,schema,key,identity,rows)
             if 'user_admin_units' not in snapshot:
-                from server import canonical_admin_unit
                 for row in snapshot.get('users', []):
-                    unit = canonical_admin_unit(row.get('unit_name'))
+                    unit = unit_lookup(CompatConnection(target), active_only=False)(row.get('unit_name'))
                     if row['role'] == 'unit' and unit:
                         target.execute('INSERT INTO app.user_admin_units VALUES(%s,%s) ON CONFLICT(user_id) DO NOTHING', (row['id'],unit[1]))
             repair_salt(target)

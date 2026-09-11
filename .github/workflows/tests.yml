@@ -1,7 +1,7 @@
 name: SQLite and PostgreSQL regression
 on:
   push:
-    branches: ['feature/ui-role-account-postgres-fix', 'fix/weekly-import-foundation']
+    branches: ['feature/ui-role-account-postgres-fix', 'fix/weekly-import-foundation', 'feature/admin-units']
   pull_request:
     branches: [main]
 permissions:
