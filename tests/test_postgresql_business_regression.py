@@ -197,7 +197,8 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
             self.assertEqual(len(criteria), 26)
             self.assertEqual(criteria[9]["code"], "QD26-10")
 
-            html = server.ocop_access_page(con, admin_session)
+            title, html = server.ocop_access_page(con, admin_session)
+            self.assertEqual(title, "Phân địa bàn OCOP")
             self.assertIn("ocop_unit", html)
             self.assertIn("Xã Tân Nhựt", html)
         finally:
