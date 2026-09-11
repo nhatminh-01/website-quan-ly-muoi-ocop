@@ -10,6 +10,8 @@ Tài liệu này ghi lại các thay đổi đáng chú ý của hệ thống Qu
 - Thêm role dùng chung `ptnt_team`, có quyền sở hữu database/schema/object của riêng dự án nhưng không có quyền superuser toàn cụm PostgreSQL.
 - Chuyển GitHub Actions sang PostgreSQL 17 duy nhất và dùng database tạm cho kiểm thử tích hợp.
 - Cấu hình cục bộ chỉ đọc `database/.env`; không còn fallback sang cấu hình hoặc database ngoài repository.
+- Hòa tính năng danh mục đơn vị hành chính từ `main` vào backend PostgreSQL-only; migration 012 bổ sung alias và Xã Tân Nhựt, không khôi phục launcher hay migration SQLite.
+- Kiểm thử tích hợp dựng mới toàn bộ migration PostgreSQL 002–012 và xác nhận thao tác quản trị danh mục trong transaction.
 
 ## Chưa phát hành — Đồng bộ quy tắc nền sản xuất muối
 

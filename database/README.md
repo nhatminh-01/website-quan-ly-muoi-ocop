@@ -60,7 +60,14 @@ Stop-Service -Name 'postgresql-x64-17'
 & 'C:\Program Files\PostgreSQL\17\bin\psql.exe' -h localhost -p 5432 -U postgres -d ptnt_qd5277_dev -f sql\009_staff_role.sql
 & 'C:\Program Files\PostgreSQL\17\bin\psql.exe' -h localhost -p 5432 -U postgres -d ptnt_qd5277_dev -f sql\010_weekly_salt_imports.sql
 & 'C:\Program Files\PostgreSQL\17\bin\psql.exe' -v ON_ERROR_STOP=1 -h localhost -p 5432 -U postgres -d ptnt_qd5277_dev -f sql\011_weekly_foundation.sql
+& 'C:\Program Files\PostgreSQL\17\bin\psql.exe' -v ON_ERROR_STOP=1 -h localhost -p 5432 -U postgres -d ptnt_qd5277_dev -f sql\012_admin_units.sql
 ```
+
+Migration 012 dùng `qd5277.DM_DonViHanhChinh` làm danh mục chung, thêm Xã Tân Nhựt
+27595 thuộc TP.HCM 79 nếu mã chưa tồn tại, tạo `app.admin_unit_aliases` và bổ sung
+mapping tài khoản còn thiếu khi tên khớp duy nhất. Migration chạy trong transaction,
+chạy lại an toàn, không xóa dữ liệu hoặc ghi đè tên/trạng thái/mapping đã có.
+Server kiểm tra schema đã nâng cấp; không tự seed danh mục PostgreSQL lúc khởi động.
 
 Sau khi hoàn tất schema, máy chủ có thể tạo role dùng chung cho nhóm bằng
 `sql\team_role_setup.sql`. Xem [hướng dẫn kết nối nhóm](../POSTGRESQL_TEAM_GUIDE.md).
@@ -83,7 +90,7 @@ Importer đọc workbook hai lần: `data_only=False` để giữ formula và `d
 
 Mapping target theo phương pháp (không dùng tổng C/F):
 
-- B → mã hành chính; kỳ snapshot → `2026-08`.
+- B → mã/tên chính thức từ `DM_DonViHanhChinh` đang hoạt động (có hỗ trợ alias); kỳ snapshot → `2026-08`.
 - D+E → `DienTich`, G+H → `SanLuong` của một record `PhuongPhapSX = 'Truyền thống'`.
 - D/G và E/H vẫn giữ riêng trong staging; C/F giữ nguyên để đối chiếu, không thay tổng tính từ chi tiết.
 - T/U chỉ giữ ở staging; `GiaBanBinhQuan` để NULL vì source không có một giá bình quân chung đáng tin cậy.
@@ -110,7 +117,8 @@ SELECT COUNT(*) AS records,
 FROM qd5277.DN_SanLuongMuoi;
 ```
 
-Số dòng target tối đa 8 cho 8 địa bàn. Validation đối chiếu C với D+E và F với G+H;
+Workbook mẫu có 8 địa bàn; importer tra cứu danh mục DB, không giới hạn danh sách 8 đơn vị.
+Validation đối chiếu C với D+E và F với G+H;
 raw C/F không bị sửa khi nguồn có sai lệch, target luôn lấy D+E và G+H.
 
 ## Import báo cáo tuần trong website

@@ -6,6 +6,7 @@ import unittest
 from uuid import uuid4
 
 import backend_db
+import admin_units
 from salt_normalization import method_values, sync_methods
 
 
@@ -76,7 +77,7 @@ class PostgreSQLSchemaTests(unittest.TestCase):
             "005_monthly_salt_sync.sql", "006_official_admin_units.sql",
             "007_ocop_init_only.sql", "008_ocop_dynamic_criteria.sql",
             "009_staff_role.sql", "010_weekly_salt_imports.sql",
-            "011_weekly_foundation.sql",
+            "011_weekly_foundation.sql", "012_admin_units.sql",
         )
         with self.connection() as connection:
             for name in migration_names:
@@ -86,6 +87,17 @@ class PostgreSQLSchemaTests(unittest.TestCase):
                 "WHERE schema_name IN ('app','qd5277','staging')")}
             self.assertEqual(schemas, {"app", "qd5277", "staging"})
             self.assertEqual(connection.execute(
-                "SELECT COUNT(*) FROM app.schema_migrations").fetchone()[0], 8)
+                "SELECT COUNT(*) FROM app.schema_migrations").fetchone()[0], 9)
             self.assertEqual(connection.execute(
                 "SELECT COUNT(*) FROM qd5277.DN_SanLuongMuoi").fetchone()[0], 0)
+            admin_id = connection.execute(
+                "INSERT INTO app.users(username,role,active,created_at) "
+                "VALUES('catalog_admin','admin',TRUE,CURRENT_TIMESTAMP) RETURNING id"
+            ).fetchone()[0]
+            compat = backend_db.CompatConnection(connection)
+            compat.execute("BEGIN")
+            admin_units.save_unit(
+                compat, {"user_id": admin_id, "role": "admin"},
+                {"code": "99999", "name": "Xã kiểm thử", "level": "xa", "active": True},
+            )
+            self.assertEqual(admin_units.get_unit(compat, "99999")["name"], "Xã kiểm thử")

@@ -19,6 +19,29 @@ Hồ sơ hợp lệ chỉ có nghĩa hoàn thành bước kiểm tra hồ sơ, c
 Chạy kiểm thử tự động bằng `python -B -m unittest discover -s tests -v`.
 Kiểm thử tích hợp dùng PostgreSQL tạm do CI tạo, không dùng database vận hành.
 
+## Danh mục đơn vị hành chính (T1)
+
+ADMIN quản lý tại **HỆ THỐNG → Danh mục đơn vị hành chính** (`/admin-units`):
+tìm kiếm/lọc, thêm, sửa và ngưng/kích hoạt đơn vị. STAFF và UNIT bị chặn ở backend
+với HTTP 403. Mã đơn vị không được trùng hoặc đổi sau khi tạo; ngưng hoạt động
+chỉ đặt `TinhTrang=false`, giữ nguyên tài khoản liên kết và dữ liệu nghiệp vụ.
+
+`DM_DonViHanhChinh` là nguồn chung cho tài khoản, weekly và phạm vi/dropdown OCOP.
+Tài khoản UNIT chọn xã/phường đang hoạt động từ database; tên chính thức trong
+`users.unit_name` và mã trong `user_admin_units` được lưu cùng transaction, có
+audit khi đổi địa bàn. Đổi tên đơn vị giữ tên cũ trong bảng alias để tra cứu báo cáo
+lịch sử, không ghi lại dữ liệu nguồn.
+
+Migration **012** bổ sung `27595 | Xã Tân Nhựt | xa | 79 | active`, bảng alias và
+mapping còn thiếu của tài khoản có tên khớp duy nhất. Chạy lại không ghi đè đơn vị
+đã sửa/ngưng.
+
+PostgreSQL cần áp dụng `database/sql/012_admin_units.sql` sau 011 trước khi khởi động;
+server không tự seed lại danh mục PostgreSQL. Xem [hướng dẫn database](database/README.md).
+Thêm xã/phường active vào DB là importer nhận ở lần tải file tiếp theo, không sửa
+Python. Bước xác nhận kiểm tra lại tên/mã/trạng thái; nếu danh mục đã đổi sau xem
+trước, người dùng cần tải lại file. Quy tắc tính muối và skip/update của PR #3 giữ nguyên.
+
 ## Nền tảng báo cáo tuần
 
 Dashboard dùng `salt_weekly_records` làm dữ liệu có hiệu lực. Chọn **Giữ dữ liệu hiện tại**
