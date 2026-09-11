@@ -108,6 +108,11 @@ _IDENTITY_TABLES = {
     "salt_weekly_records",
 }
 
+_BOOLEAN_LITERAL_RE = re.compile(
+    r"\b(active|TinhTrang)\b\s*=\s*([01])\b",
+    re.IGNORECASE,
+)
+
 
 def _translate_placeholders(sql: str) -> str:
     """Translate the handlers' compact placeholders to psycopg syntax."""
@@ -144,9 +149,23 @@ def _translate_placeholders(sql: str) -> str:
     return "".join(result)
 
 
+def _translate_boolean_literals(sql: str) -> str:
+    """Adapt legacy SQLite boolean predicates to PostgreSQL booleans.
+
+    The application schema defines ``active`` and ``TinhTrang`` as BOOLEAN. Some
+    mature handlers still use SQLite-style ``=1``/``=0`` predicates. Rewriting
+    those two known boolean columns at the connection boundary keeps the business
+    handlers unchanged while preventing PostgreSQL ``boolean = integer`` errors.
+    """
+    def replace(match: re.Match) -> str:
+        return f"{match.group(1)}={'TRUE' if match.group(2) == '1' else 'FALSE'}"
+
+    return _BOOLEAN_LITERAL_RE.sub(replace, sql)
+
+
 def translate_sql(sql: str) -> tuple[str, str | None]:
     """Return PostgreSQL SQL and the inserted identity table, when applicable."""
-    translated = _translate_placeholders(sql)
+    translated = _translate_boolean_literals(_translate_placeholders(sql))
 
     insert = re.match(r"\s*INSERT\s+INTO\s+(?:[A-Za-z_][\w]*\.)?([A-Za-z_][\w]*)", translated, re.I)
     table = insert.group(1).casefold() if insert else None
