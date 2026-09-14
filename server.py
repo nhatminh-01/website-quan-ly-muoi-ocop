@@ -2231,6 +2231,15 @@ def weekly_records_page(session, query):
         selected = next((batch for batch in batches if batch["week_code"] == requested_week), None)
     if not selected and batches:
         selected = batches[0]
+    # Do not carry a unit filter from a different sheet into this report.
+    if selected and requested_unit:
+        has_unit = con.execute(
+            """SELECT 1 FROM salt_weekly_import_rows
+                WHERE batch_id=? AND ma_don_vi_hanh_chinh=? LIMIT 1""",
+            (selected["id"], requested_unit),
+        ).fetchone()
+        if not has_unit:
+            requested_unit = ""
 
     rows = []
     if selected:
@@ -2254,16 +2263,35 @@ def weekly_records_page(session, query):
         f'{esc(batch["sheet_name"])} · {esc(batch["week_code"])} · {esc(batch["filename"])}</option>'
         for batch in batches
     )
-    # Unit options are resolved separately so a selected sheet can be filtered
-    # without exposing technical IDs in the rendered table.
-    unit_con = db_conn()
-    try:
-        unit_rows = admin_units.units(unit_con, active_only=True, communes_only=True)
-    finally:
-        unit_con.close()
+    # Unit options belong to the selected report, not to the whole official
+    # administrative catalog.  The catalog is still used for the display name
+    # and code, but a unit only appears when this sheet actually contains a
+    # mapped row for it.
+    unit_rows = []
+    if selected:
+        unit_con = db_conn()
+        try:
+            unit_rows = [dict(row) for row in unit_con.execute(
+                """SELECT DISTINCT r.ma_don_vi_hanh_chinh AS code,
+                           COALESCE(u.TenDonVi, r.unit_name_raw) AS name
+                    FROM salt_weekly_import_rows r
+                    LEFT JOIN DM_DonViHanhChinh u
+                      ON u.Ma_DonViHanhChinh=r.ma_don_vi_hanh_chinh
+                   WHERE r.batch_id=?
+                     AND r.ma_don_vi_hanh_chinh IS NOT NULL
+                     AND upper(r.ma_don_vi_hanh_chinh) NOT LIKE 'TMP%'
+                   ORDER BY name, code""", (selected["id"],)
+            ).fetchall()]
+        finally:
+            unit_con.close()
     if session["role"] == ROLE_UNIT:
         official = canonical_admin_unit(session["unit_name"])
         unit_rows = [u for u in unit_rows if official and u["code"] == official[1]]
+    available_codes = {unit["code"] for unit in unit_rows}
+    # A batch change should not leave a previous unit filter pointing at a
+    # unit that is absent from the newly selected sheet.
+    if requested_unit and requested_unit not in available_codes:
+        requested_unit = ""
     unit_options = '<option value="">Tất cả xã/phường</option>' + ''.join(
         f'<option value="{esc(unit["code"])}" {"selected" if unit["code"] == requested_unit else ""}>{esc(unit["name"])}</option>'
         for unit in unit_rows

@@ -2,6 +2,13 @@
 
 Tài liệu này ghi lại các thay đổi đáng chú ý của hệ thống Quản lý muối – OCOP.
 
+## 2026-09-14 — Giới hạn đơn vị trong tra cứu báo cáo tuần
+
+- Dropdown xã/phường tại `/salt/weekly` chỉ hiển thị các đơn vị có dòng dữ liệu
+  trong sheet đang chọn; không còn lấy toàn bộ danh mục hành chính để render.
+- Khi chuyển sheet, bộ lọc đơn vị cũ được tự xóa nếu đơn vị đó không có trong
+  sheet mới.
+
 ## 2026-09-14 — Tinh giản giao diện import, tra cứu và xuất báo cáo
 
 - Rút trang chủ và sidebar còn hai phân hệ nghiệp vụ: Diêm nghiệp và OCOP.
