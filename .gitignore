@@ -14,3 +14,6 @@ database/backups/
 database/test-temp*/
 database/validation/validation_issues.csv
 database/validation/validation_report.md
+
+database/validation/production_server*.log
+database/validation/*.log

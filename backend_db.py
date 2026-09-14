@@ -304,7 +304,7 @@ def healthcheck() -> dict[str, object]:
             """
             SELECT table_schema, COUNT(*)::INTEGER AS tables
             FROM information_schema.tables
-            WHERE table_schema IN ('app', 'qd5277', 'staging')
+            WHERE table_schema IN ('app', 'qd5333', 'qd5277', 'staging')
             GROUP BY table_schema
             ORDER BY table_schema
             """
