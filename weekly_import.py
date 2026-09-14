@@ -14,6 +14,15 @@ class WeeklyImportError(ValueError):
     pass
 
 
+_FULL_DATE_RE = re.compile(
+    r"(?<!\d)(?:(?P<iso_year>20\d{2})[./-](?P<iso_month>\d{1,2})[./-](?P<iso_day>\d{1,2})|"
+    r"(?P<day>\d{1,2})[./-](?P<month>\d{1,2})[./-](?P<year>20\d{2}))(?!\d)"
+)
+_DAY_MONTH_RE = re.compile(r"(?<!\d)(?P<day>\d{1,2})[.]?(?P<month>\d{1,2})(?!\d)")
+_SHEET_WEEK_RE = re.compile(r"(?:\b(?:tuan|tuần|w)\s*0?(?P<week>\d{1,2})\b)", re.IGNORECASE)
+_YEAR_RE = re.compile(r"(?<!\d)(?P<year>20\d{2})(?!\d)")
+
+
 NUMERIC_COLUMNS = {
     "dien_tich": 3, "area_land": 4, "area_tarp": 5,
     "san_luong": 6, "harvest_land": 7, "harvest_tarp": 8,
@@ -64,10 +73,161 @@ def _week_code(report_date):
     return day, f"{iso_year}-W{iso_week:02d}"
 
 
-def parse_weekly_workbook(file_bytes, report_date, sheet_name, filename, unit_lookup):
-    """Return a serializable preview; invalid rows are shown but cannot commit."""
+def _date_from_value(value):
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    match = _FULL_DATE_RE.search(_text(value))
+    if not match:
+        return None
+    parts = match.groupdict()
     try:
-        day, week_code = _week_code(report_date)
+        if parts.get("iso_year"):
+            return date(int(parts["iso_year"]), int(parts["iso_month"]), int(parts["iso_day"]))
+        return date(int(parts["year"]), int(parts["month"]), int(parts["day"]))
+    except ValueError:
+        return None
+
+
+def _years_in(text):
+    return [int(match.group("year")) for match in _YEAR_RE.finditer(_text(text))]
+
+
+def detect_weekly_period(file_bytes, filename="", sheet_name=""):
+    """Detect a weekly report date without guessing a missing year.
+
+    Full dates in the selected sheet take priority. A day/month/week pattern
+    in the sheet name is combined with a year only when that year is actually
+    present in workbook content, the filename, or the sheet name.
+    """
+    if not file_bytes:
+        raise WeeklyImportError("File Excel rỗng.")
+    if len(file_bytes) > 20 * 1024 * 1024:
+        raise WeeklyImportError("File Excel quá lớn (tối đa 20 MB).")
+    if not str(filename or "").lower().endswith(".xlsx"):
+        raise WeeklyImportError("Chỉ hỗ trợ file .xlsx.")
+    try:
+        from openpyxl import load_workbook
+    except Exception as exc:
+        raise WeeklyImportError("Máy chủ chưa cài openpyxl.") from exc
+    try:
+        value_book = load_workbook(io.BytesIO(file_bytes), data_only=True, read_only=True)
+    except Exception as exc:
+        raise WeeklyImportError(f"Không đọc được file Excel: {exc}") from exc
+
+    try:
+        names = list(value_book.sheetnames)
+        selected = _text(sheet_name) or value_book.active.title
+        if selected not in names:
+            raise WeeklyImportError(
+                f"Không tìm thấy sheet '{selected}'. Có: {', '.join(names)}"
+            )
+
+        selected_dates = []
+        content_years = []
+        # Dates live in the selected report header. Years can also be present
+        # in a cover/metadata sheet, so inspect the bounded header area of
+        # every sheet without parsing the report body.
+        for worksheet in value_book.worksheets:
+            for row in worksheet.iter_rows(min_row=1, max_row=80, max_col=28, values_only=True):
+                for value in row:
+                    if worksheet.title == selected:
+                        detected = _date_from_value(value)
+                        if detected:
+                            selected_dates.append(detected)
+                    content_years.extend(_years_in(value))
+
+        selected_title_date = _date_from_value(selected)
+        sheet_week_match = _SHEET_WEEK_RE.search(selected)
+        sheet_week = int(sheet_week_match.group("week")) if sheet_week_match else None
+        day_month_match = None
+        if sheet_week:
+            day_month_match = _DAY_MONTH_RE.search(selected)
+
+        if selected_dates:
+            detected = selected_dates[0]
+            return {
+                "sheet_name": selected,
+                "report_date": detected.isoformat(),
+                "display_date": detected.strftime("%d/%m/%Y"),
+                "week_number": sheet_week,
+                "period_detected": True,
+                "source": "worksheet",
+            }
+        if selected_title_date:
+            return {
+                "sheet_name": selected,
+                "report_date": selected_title_date.isoformat(),
+                "display_date": selected_title_date.strftime("%d/%m/%Y"),
+                "week_number": sheet_week,
+                "period_detected": True,
+                "source": "sheet_name",
+            }
+
+        filename_years = _years_in(filename)
+        sheet_years = _years_in(" ".join(names))
+        year = next(iter(content_years), None)
+        year_source = "worksheet"
+        if year is None and filename_years:
+            year, year_source = filename_years[0], "filename"
+        if year is None and sheet_years:
+            year, year_source = sheet_years[0], "sheet_name"
+
+        if day_month_match and year is not None:
+            try:
+                detected = date(
+                    year,
+                    int(day_month_match.group("month")),
+                    int(day_month_match.group("day")),
+                )
+            except ValueError:
+                detected = None
+            if detected:
+                return {
+                    "sheet_name": selected,
+                    "report_date": detected.isoformat(),
+                    "display_date": detected.strftime("%d/%m/%Y"),
+                    "week_number": sheet_week,
+                    "period_detected": True,
+                    "source": f"sheet_name+{year_source}",
+                }
+
+        hint = ""
+        if day_month_match and not year:
+            hint = (
+                f"Sheet '{selected}' có ngày {int(day_month_match.group('day')):02d}/"
+                f"{int(day_month_match.group('month')):02d} nhưng chưa xác định được năm."
+            )
+        return {
+            "sheet_name": selected,
+            "report_date": None,
+            "display_date": None,
+            "week_number": sheet_week,
+            "period_detected": False,
+            "source": "manual",
+            "hint": hint,
+        }
+    finally:
+        value_book.close()
+
+
+def parse_weekly_workbook(file_bytes, report_date=None, sheet_name="", filename="", unit_lookup=None):
+    """Return a serializable preview; invalid rows are shown but cannot commit."""
+    selected_hint = _text(sheet_name)
+    detection = detect_weekly_period(file_bytes, filename, selected_hint)
+    try:
+        if _text(report_date):
+            day, week_code = _week_code(report_date)
+            period_source = "manual"
+        elif detection.get("report_date"):
+            day, week_code = _week_code(detection["report_date"])
+            period_source = detection.get("source", "detected")
+        else:
+            raise WeeklyImportError(
+                detection.get("hint")
+                or "Chưa xác định được ngày báo cáo. Vui lòng nhập 'Số liệu lũy tiến đến ngày'."
+            )
     except ValueError as exc:
         raise WeeklyImportError("Ngày kết thúc tuần không hợp lệ.") from exc
     try:
@@ -147,9 +307,21 @@ def parse_weekly_workbook(file_bytes, report_date, sheet_name, filename, unit_lo
             })
         if not rows:
             raise WeeklyImportError("Không tìm thấy dòng xã/phường trong sheet đã chọn.")
+        period_warnings = []
+        sheet_week = detection.get("week_number")
+        if sheet_week and day.isocalendar().week != sheet_week:
+            period_warnings.append(
+                f"Tên sheet ghi Tuần {sheet_week}, nhưng ngày {day.strftime('%d/%m/%Y')} thuộc "
+                f"tuần ISO {day.isocalendar().week:02d}. Không thể xác nhận import khi hai thông tin không khớp."
+            )
         return {
             "filename": filename, "file_sha256": hashlib.sha256(file_bytes).hexdigest(),
             "sheet_name": selected, "week_code": week_code, "report_date": day.isoformat(),
+            "report_date_display": day.strftime("%d/%m/%Y"),
+            "period_source": period_source,
+            "period_detected": period_source != "manual",
+            "period_warnings": period_warnings,
+            "period_blocked": bool(period_warnings),
             "rows": rows,
             "valid_rows": sum(row["status"] == "valid" for row in rows),
             "warning_rows": sum(row["status"] == "warning" for row in rows),
@@ -164,6 +336,8 @@ def commit_weekly_preview(con, session, preview, mode, now):
     """Persist a validated preview. Caller owns commit/rollback."""
     if preview.get("error_rows"):
         raise WeeklyImportError("Preview còn dòng lỗi; chưa thể import.")
+    if preview.get("period_blocked"):
+        raise WeeklyImportError("Kỳ báo cáo không khớp giữa ngày và tên sheet; chưa thể import.")
     if mode not in ("skip", "update"):
         raise WeeklyImportError("Chế độ xử lý dữ liệu cũ không hợp lệ.")
     duplicate = con.execute(

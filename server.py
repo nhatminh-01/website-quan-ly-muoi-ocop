@@ -28,7 +28,10 @@ from backend_db import compat_connect, load_settings, INTEGRITY_ERRORS
 from permissions import (ROLE_ADMIN, ROLE_STAFF, ROLE_UNIT, ROLE_LABELS,
                          is_admin, is_chi_cuc_user, can_manage_users, can_review_records)
 from salt_normalization import sync_methods
-from weekly_import import WeeklyImportError, parse_weekly_workbook, commit_weekly_preview, effective_weekly_dashboard
+from weekly_import import (WeeklyImportError, detect_weekly_period,
+                           parse_weekly_workbook, commit_weekly_preview,
+                           effective_weekly_dashboard)
+from workbook_utils import WorkbookInspectionError, inspect_workbook
 import repositories
 import admin_units
 import admin_unit_pages
@@ -611,27 +614,12 @@ def sidebar_group(group, items, current):
             + f'</summary><div class="sidebar-group-links">{content}</div></details>')
 
 
-def salt_data_tabs(session, current):
-    """Small navigation for the three supported salt operations."""
-    items = [
-        ("/records", "Tra cứu / Xuất báo cáo"),
-    ]
-    if is_chi_cuc_user(session):
-        items.append(("/import-excel", "Import Excel tuần"))
-    links = ''.join(
-        f'<a class="salt-tab{" active" if href == current else ""}" href="{href}"'
-        + (' aria-current="page"' if href == current else '')
-        + f'>{label}</a>'
-        for href, label in items
-    )
-    return f'<nav class="salt-tabs" aria-label="Dữ liệu diêm nghiệp">{links}</nav>'
-
-
 def base_page(title, body, session=None, active_path=None):
     top = ""
     if session:
         current = {
             "Tổng quan": "/dashboard",
+            "Trang chủ": "/dashboard",
             "Tài khoản": "/users",
             "Sửa tài khoản": "/users",
             "Đổi mật khẩu": "/change-password",
@@ -646,7 +634,7 @@ def base_page(title, body, session=None, active_path=None):
             "Dữ liệu chuẩn hóa": "/records",
         }.get(title, "/records")
         current = active_path or ("/standard-data" if title == "Dữ liệu chuẩn hóa" else current)
-        salt_items = [("/records", "table", "Tra cứu / Xuất báo cáo")]
+        salt_items = [("/records", "table", "Tra cứu báo cáo Diêm nghiệp")]
         if is_chi_cuc_user(session):
             salt_items.insert(0, ("/import-excel", "download", "Import báo cáo tuần"))
         system_items = []
@@ -655,7 +643,7 @@ def base_page(title, body, session=None, active_path=None):
             system_items.append(("/admin-units", "location", "Danh mục đơn vị hành chính"))
         system_items.extend([("/change-password", "key", "Đổi mật khẩu"),
                              ("/logout", "logout", "Đăng xuất")])
-        nav_groups = [("TỔNG QUAN", [("/dashboard", "dashboard", "Bảng giám sát")]),
+        nav_groups = [("TRANG CHỦ", [("/dashboard", "home", "Trang chủ")]),
                       ("DIÊM NGHIỆP", salt_items)]
         if ocop_available():
             ocop_items = [("/ocop", "table", "Tra cứu / Xuất báo cáo")]
@@ -684,14 +672,13 @@ def base_page(title, body, session=None, active_path=None):
           </div>
         </header>
         <aside class="sidebar" id="site-sidebar" aria-label="Menu chính">
-          <form class="sidebar-search" action="/records" method="get" role="search"><button type="submit" aria-label="Tìm báo cáo">{icon('search')}</button><input name="q" type="search" placeholder="Tìm báo cáo" aria-label="Tìm báo cáo theo đơn vị hoặc ghi chú"></form>
           <nav class="sidebar-nav" aria-label="Chức năng">{''.join(nav)}</nav>
           <div class="sidebar-footer"><img class="sidebar-watermark" src="/assets/quoc-huy.png" alt="" width="148" height="152"><div class="sidebar-footer-line"></div><strong><span>TRUNG TÂM CHUYỂN ĐỔI SỐ</span><span>NÔNG NGHIỆP VÀ MÔI TRƯỜNG</span></strong><p>Theo dõi sản xuất và tổng hợp báo cáo các đơn vị.</p></div>
         </aside>
         <button type="button" id="sidebar-backdrop" class="sidebar-backdrop" aria-label="Đóng menu" tabindex="-1"></button>
         """
         body = f'<main class="app-main" id="main-content">{body}</main>'
-    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260910-admin-units"><script src="/assets/app.js?v=20260910-admin-units" defer></script></head><body>{top}{body}</body></html>"""
+    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260914-ui-refinement"><script src="/assets/app.js?v=20260914-ui-refinement" defer></script></head><body>{top}{body}</body></html>"""
 
 
 # OCOP T2 is part of this single server entry point.  Keep the original page
@@ -811,7 +798,7 @@ def landing_page(session):
           <div class="module-card-heading"><div><span class="eyebrow">PHÂN HỆ 01</span><h2>DIÊM NGHIỆP</h2></div>{icon('area')}</div>
           <p>Nhập báo cáo tuần, tra cứu theo xã/phường và xuất đúng tập dữ liệu đang lọc.</p>
           <div class="module-stats"><span><strong>{salt_batches}</strong> sheet đã nhập</span><span><strong>{salt_rows}</strong> dòng dữ liệu</span></div>
-          <div class="actions">{salt_import_action}<a class="btn" href="/records">Tra cứu / Xuất báo cáo</a></div>
+          <div class="actions">{salt_import_action}<a class="btn" href="/records">Tra cứu Diêm nghiệp</a></div>
         </section>
         <section class="module-card">
           <div class="module-card-heading"><div><span class="eyebrow">PHÂN HỆ 02</span><h2>OCOP</h2></div>{icon('table')}</div>
@@ -1097,7 +1084,6 @@ def records_page(session, query):
     <div class="container">
       {take_flash(session)}
       <div class="page-head"><div><h1>Dữ liệu báo cáo</h1><div class="subtitle">Tra cứu, lọc và xuất dữ liệu theo kỳ báo cáo/đơn vị/trạng thái.</div></div><div class="actions"><a class="btn primary" href="/records/new">+ Nhập số liệu</a><a class="btn ok" href="/export.xlsx?{query_string}">Xuất Excel</a>{standard_button}</div></div>
-      {salt_data_tabs(session, "/records")}
       <div class="card"><form class="toolbar" method="get" action="/records">
         <div class="field"><label>Từ khóa</label><input name="q" value="{esc(filters['q'])}" placeholder="Đơn vị, ghi chú..."></div>
         {unit_field}
@@ -1175,8 +1161,6 @@ def standard_data_page(session):
           <a class="btn" href="/records">← Dữ liệu báo cáo</a>
         </div>
       </div>
-
-      {salt_data_tabs(session, "/standard-data")}
 
       <div class="notice info">
         Tổng cộng <b>{len(rows)}</b> bản ghi chuẩn hóa. Sheet tuần chỉ dùng cho theo dõi và so sánh;
@@ -2104,7 +2088,7 @@ def legacy_import_excel_data(
         f"Bỏ qua: {skipped}."
     )
 
-def import_excel_page(session):
+def import_excel_page(session, query=""):
     if not is_chi_cuc_user(session):
         return None
     con = db_conn()
@@ -2119,29 +2103,62 @@ def import_excel_page(session):
         f"<td>{b['updated_rows']}</td><td>{b['skipped_rows']}</td><td>{esc(b['username'])}</td></tr>"
         for b in batches
     ) or '<tr><td colspan="7" class="empty">Chưa có đợt import tuần.</td></tr>'
+    upload = session.get("weekly_import_upload")
+    if upload:
+        sheet_names = upload.get("sheet_names", [])
+        selected_sheet = upload.get("selected_sheet") or upload.get("recommended_sheet") or (sheet_names[0] if sheet_names else "")
+        options = "".join(
+            f'<option value="{esc(name)}"{" selected" if name == selected_sheet else ""}>{esc(name)}</option>'
+            for name in sheet_names
+        )
+        try:
+            detected = detect_weekly_period(upload["content"], upload["filename"], selected_sheet)
+        except WeeklyImportError as exc:
+            detected = {"report_date": None, "hint": str(exc), "period_detected": False}
+        if detected.get("report_date"):
+            detected_day = date.fromisoformat(detected["report_date"])
+            period_html = f'''
+              <div class="detected-period" role="status">
+                <div><span class="detected-period-label">Kỳ báo cáo</span><strong>Tuần {detected_day.isocalendar().week} / {detected_day.isocalendar().year}</strong></div>
+                <div><span class="detected-period-label">Số liệu lũy tiến đến</span><strong>{detected_day.strftime("%d/%m/%Y")}</strong></div>
+                <small>Đã nhận diện từ {esc(detected.get("source", "workbook"))}; bạn vẫn có thể đổi sheet.</small>
+              </div>'''
+            date_field = ""
+        else:
+            period_html = f'<div class="notice info">{esc(detected.get("hint") or "Không tự xác định được ngày báo cáo từ file này.")}</div>'
+            date_field = f'<div class="field"><label>Số liệu lũy tiến đến ngày</label><input type="date" name="report_date" value="{esc(upload.get("report_date", ""))}" required></div>'
+        selection_form = f'''
+      <form class="card js-loading-form" method="post" action="/import-excel/preview">
+        {csrf_input(session)}
+        <div class="weekly-step"><span>2</span><div><strong>Chọn sheet và kỳ báo cáo</strong><small>Hệ thống dùng đúng sheet bạn chọn để xem trước.</small></div></div>
+        <div class="field sheet-picker"><label for="weekly-sheet">Sheet</label><select id="weekly-sheet" name="sheet_name" required>{options}</select></div>
+        <div class="import-file-name"><span>File Excel</span><strong>{esc(upload["filename"])}</strong></div>
+        {period_html}{date_field}
+        <div class="notice info">Cột B phải là xã/phường chính thức. C/F là tổng diện tích và sản lượng; D/E, G/H là chi tiết nền đất và nền trải bạt.</div>
+        <div class="actions"><button class="btn primary" type="submit" data-loading-text="Đang đọc và kiểm tra Excel...">Xem trước</button><a class="btn" href="/import-excel?reset=1">Hủy file này</a></div>
+      </form>'''
+        workflow = selection_form
+        page_heading = '<h1>Chọn sheet báo cáo Diêm nghiệp</h1><div class="subtitle">Bước 2: chọn sheet, xem kỳ báo cáo đã nhận diện rồi kiểm tra dữ liệu.</div>'
+    else:
+        workflow = f'''
+      <form class="card import-card js-loading-form" method="post" action="/import-excel" enctype="multipart/form-data">
+        {csrf_input(session)}
+        <div class="weekly-step"><span>1</span><div><strong>Chọn file Excel</strong><small>Hệ thống sẽ đọc danh sách sheet trước, chưa ghi database.</small></div></div>
+        <div class="field"><label for="weekly-excel-file">File Excel (.xlsx)</label><input id="weekly-excel-file" type="file" name="excel_file" accept=".xlsx" required></div>
+        <div class="actions"><button class="btn primary" type="submit" data-loading-text="Đang đọc workbook...">Tiếp tục</button></div>
+      </form>'''
+        page_heading = '<h1>Import báo cáo Diêm nghiệp</h1><div class="subtitle">Bước 1: chọn file Excel. Tên sheet và kỳ báo cáo sẽ được hệ thống nhận diện sau đó.</div>'
     body = f"""
     <div class="container weekly-page">
       {take_flash(session)}
-      <div class="page-head"><div><h1>Import báo cáo tuần</h1>
-        <div class="subtitle">Bước 1: chọn file. Hệ thống chỉ xem trước và kiểm tra, chưa ghi database.</div></div>
-        <a class="btn" href="/salt/weekly">Tra cứu tuần</a></div>
-      {salt_data_tabs(session, "/import-excel")}
-      <form class="card import-card js-loading-form" method="post" action="/import-excel" enctype="multipart/form-data">
-        {csrf_input(session)}
-        <div class="weekly-step"><span>1</span><div><strong>Chọn dữ liệu tuần</strong><small>File được kiểm tra trước khi import.</small></div></div>
-        <div class="grid">
-          <div class="field"><label>File Excel (.xlsx)</label><input type="file" name="excel_file" accept=".xlsx" required></div>
-          <div class="field"><label>Ngày chốt số liệu tuần</label><input type="date" name="report_date" required></div>
-          <div class="field"><label>Tên sheet</label><input name="sheet_name" placeholder="Ví dụ: 21.8-Tuan 34"></div>
-        </div>
-        <div class="notice info">Cột B phải là xã/phường chính thức. C/F là tổng diện tích và sản lượng; D/E, G/H là chi tiết nền đất và nền trải bạt.</div>
-        <button class="btn primary" type="submit" data-loading-text="Đang đọc và kiểm tra Excel...">Kiểm tra và xem trước</button>
-      </form>
+      <div class="page-head"><div>{page_heading}</div>
+        <a class="btn" href="/records">Tra cứu báo cáo Diêm nghiệp</a></div>
+      {workflow}
       <section class="card"><h2 class="section-title">Lịch sử import gần đây</h2>
         <div class="table-wrap"><table class="summary-table"><thead><tr><th>Tuần</th><th>File</th><th>Sheet</th><th>Mới</th><th>Cập nhật</th><th>Bỏ qua</th><th>Người import</th></tr></thead><tbody>{history}</tbody></table></div>
       </section>
     </div>"""
-    return base_page("Import báo cáo tuần", body, session, active_path="/import-excel")
+    return base_page("Import báo cáo Diêm nghiệp", body, session, active_path="/import-excel")
 
 
 def import_preview_page(session):
@@ -2163,20 +2180,37 @@ def import_preview_page(session):
             f'<td><span class="validation-badge {row["status"]}">{label}</span>'
             f'<div class="validation-message">{esc("; ".join(messages))}</div></td></tr>'
         )
-    blocked = preview["error_rows"] > 0
+    blocked = preview["error_rows"] > 0 or preview.get("period_blocked")
+    period_day = date.fromisoformat(str(preview["report_date"]))
+    period_label = f"Tuần {period_day.isocalendar().week} / {period_day.isocalendar().year}"
+    period_warning_html = "".join(
+        f'<div class="notice warn"><strong>Kiểm tra kỳ báo cáo:</strong> {esc(message)}</div>'
+        for message in preview.get("period_warnings", [])
+    )
+    detected_note = (
+        "Kỳ báo cáo được tự nhận diện từ workbook."
+        if preview.get("period_detected")
+        else "Kỳ báo cáo được nhập bổ sung vì workbook chưa đủ thông tin nhận diện."
+    )
     confirm = f"""
       <form class="confirm-import" method="post" action="/import-excel/confirm">
         {csrf_input(session)}
         <div class="field"><label>Nếu xã/tuần đã tồn tại</label><select name="mode"><option value="skip">Giữ dữ liệu hiện tại</option><option value="update">Cập nhật bằng file này</option></select></div>
         <button class="btn primary" type="submit" {'disabled' if blocked else ''}>Xác nhận import</button>
-      </form>""" if not blocked else '<div class="notice err">Cần sửa các dòng lỗi trong Excel rồi tải lại file.</div>'
+    </form>""" if not blocked else '<div class="notice err">Cần sửa các dòng lỗi hoặc kiểm tra lại kỳ báo cáo rồi tải lại file.</div>'
     body = f"""
     <div class="container weekly-page">
       {take_flash(session)}
-      <div class="page-head"><div><h1>Xem trước báo cáo tuần</h1>
-        <div class="subtitle">Bước 2: kiểm tra {esc(preview['filename'])} · {esc(preview['sheet_name'])} · {esc(preview['week_code'])}</div></div>
-        <a class="btn" href="/import-excel">Chọn file khác</a></div>
-      {salt_data_tabs(session, "/import-excel")}
+      <div class="page-head"><div><h1>Xem trước import Diêm nghiệp</h1>
+        <div class="subtitle">Bước 3: kiểm tra {esc(preview['filename'])} · {esc(preview['sheet_name'])}</div></div>
+        <a class="btn" href="/import-excel?reset=1">Chọn file khác</a></div>
+      <div class="detected-period preview-period" role="status">
+        <div><span class="detected-period-label">Sheet</span><strong>{esc(preview['sheet_name'])}</strong></div>
+        <div><span class="detected-period-label">Kỳ báo cáo</span><strong>{esc(period_label)}</strong></div>
+        <div><span class="detected-period-label">Số liệu lũy tiến đến</span><strong>{period_day.strftime('%d/%m/%Y')}</strong></div>
+        <small>{detected_note}</small>
+      </div>
+      {period_warning_html}
       <div class="validation-summary">
         <div><strong>{len(preview['rows'])}</strong><span>Tổng số xã</span></div>
         <div class="valid"><strong>{preview['valid_rows']}</strong><span>Hợp lệ</span></div>
@@ -2186,7 +2220,7 @@ def import_preview_page(session):
       <section class="card"><div class="table-wrap"><table class="summary-table preview-table"><thead><tr><th>Dòng Excel</th><th>Đơn vị</th><th>Diện tích (ha)</th><th>Sản lượng (tấn)</th><th>Kết quả</th></tr></thead><tbody>{''.join(rows_html)}</tbody></table></div></section>
       {confirm}
     </div>"""
-    return base_page("Xem trước import tuần", body, session, active_path="/import-excel")
+    return base_page("Xem trước import Diêm nghiệp", body, session, active_path="/import-excel")
 
 
 def _weekly_excel_value(value):
@@ -2225,6 +2259,9 @@ def weekly_records_page(session, query):
     ).fetchall()
     requested_batch = params.get("batch", [""])[0].strip()
     requested_unit = params.get("unit", [""])[0].strip()
+    view = params.get("view", ["summary"])[0].strip().lower()
+    if view not in ("summary", "full"):
+        view = "summary"
     selected = next((batch for batch in batches if str(batch["id"]) == requested_batch), None)
     if not selected:
         requested_week = params.get("week", [""])[0].strip()
@@ -2300,6 +2337,32 @@ def weekly_records_page(session, query):
         report = '<section class="card empty">Chưa có sheet báo cáo tuần nào được import.</section>'
     else:
         raw_rows = [json.loads(row["raw_data_json"]) for row in rows]
+        def raw_value(raw, column):
+            return esc(_weekly_excel_value(raw.get(str(column), {}).get("value")))
+
+        summary_rows = "".join(
+            f'<tr><td>{raw_value(raw, 2)}</td><td>{raw_value(raw, 3)}</td>'
+            f'<td>{raw_value(raw, 6)}</td><td>{raw_value(raw, 9)}</td>'
+            f'<td>{raw_value(raw, 12)}</td><td>{raw_value(raw, 18)}</td>'
+            f'<td>{raw_value(raw, 19)}</td><td>{raw_value(raw, 20)}</td>'
+            f'<td>{raw_value(raw, 21)}</td></tr>'
+            for raw in raw_rows
+        ) or '<tr><td colspan="9" class="empty">Không có xã/phường phù hợp.</td></tr>'
+        summary_total = (
+            '<tr class="sheet-total"><th>TỔNG CỘNG</th>'
+            f'<th>{esc(_weekly_excel_value(_weekly_total(raw_rows, 3)))}</th>'
+            f'<th>{esc(_weekly_excel_value(_weekly_total(raw_rows, 6)))}</th>'
+            f'<th>{esc(_weekly_excel_value(_weekly_total(raw_rows, 9)))}</th>'
+            f'<th>{esc(_weekly_excel_value(_weekly_total(raw_rows, 12)))}</th>'
+            f'<th>{esc(_weekly_excel_value(_weekly_total(raw_rows, 18)))}</th>'
+            f'<th>{esc(_weekly_excel_value(_weekly_total(raw_rows, 19)))}</th>'
+            '<th>—</th><th>—</th></tr>'
+        )
+        summary_table = f'''
+          <div class="table-wrap"><table class="summary-table weekly-summary-table">
+            <thead><tr><th>Xã/phường</th><th>Diện tích tổng (ha)</th><th>Sản lượng thu hoạch (tấn)</th><th>Đã tiêu thụ (tấn)</th><th>Còn lại (tấn)</th><th>Số hộ</th><th>Lao động</th><th>Giá muối đất</th><th>Giá muối trải bạt</th></tr></thead>
+            <tbody>{summary_total}{summary_rows}</tbody>
+          </table></div>'''
         detail_rows = []
         for raw in raw_rows:
             cells = ''.join(f'<td>{esc(_weekly_excel_value(raw.get(str(column), {}).get("value")))}</td>' for column in range(1, 29))
@@ -2320,14 +2383,14 @@ def weekly_records_page(session, query):
         except ValueError:
             report_date = str(report_date)
         export_query = urlencode({k: v for k, v in {"batch": str(selected["id"]), "unit": requested_unit}.items() if v})
-        report = f"""
-        <section class="sheet-report">
-          <div class="sheet-meta">
-            <div><span>Sheet báo cáo</span><strong>{esc(selected['sheet_name'])}</strong></div>
-            <div><span>Ngày chốt</span><strong>{esc(report_date)}</strong></div>
-            <div><span>Tuần</span><strong>{esc(selected['week_code'])}</strong></div>
-            <div><span>Số dòng đơn vị</span><strong>{len(rows)}</strong></div>
-          </div>
+        view_query = lambda selected_view: urlencode({k: v for k, v in {"batch": str(selected["id"]), "unit": requested_unit, "view": selected_view}.items() if v})
+        view_switch = (
+            '<div class="view-switch" role="tablist" aria-label="Chế độ xem báo cáo">'
+            f'<a class="view-switch-link{" active" if view == "summary" else ""}" href="/records?{view_query("summary")}" role="tab"{" aria-selected=\"true\"" if view == "summary" else ""}>Bảng tổng hợp</a>'
+            f'<a class="view-switch-link{" active" if view == "full" else ""}" href="/records?{view_query("full")}" role="tab"{" aria-selected=\"true\"" if view == "full" else ""}>Xem bảng Excel đầy đủ</a>'
+            '</div>'
+        )
+        full_table = f'''
           <div class="excel-sheet-wrap"><table class="excel-sheet">
             <caption>Báo cáo tình hình sản xuất, chế biến, tiêu thụ niên vụ muối — lũy tiến đến ngày {esc(report_date)}</caption>
             <thead>
@@ -2335,7 +2398,18 @@ def weekly_records_page(session, query):
               <tr><th>Cộng</th><th>Muối đất</th><th>Muối trải bạt</th><th>Cộng</th><th>Muối đất</th><th>Muối trải bạt</th><th>Cộng</th><th>Muối đất</th><th>Muối trải bạt</th><th>Cộng</th><th>Muối đất</th><th>Muối trải bạt</th><th>Cộng</th><th>Muối tinh</th><th>Muối I-ốt</th><th>Muối đất</th><th>Muối trải bạt</th><th>Cộng</th><th>Muối đất</th><th>Muối trải bạt</th></tr>
             </thead>
             <tbody><tr class="sheet-total">{''.join(total_cells)}</tr>{''.join(detail_rows)}</tbody>
-          </table></div>
+          </table></div>'''
+        report_table = summary_table if view == "summary" else full_table
+        report = f"""
+        <section class="sheet-report">
+          <div class="sheet-meta">
+            <div><span>Sheet báo cáo</span><strong>{esc(selected['sheet_name'])}</strong></div>
+            <div><span>Số liệu đến ngày</span><strong>{esc(report_date)}</strong></div>
+            <div><span>Tuần</span><strong>{esc(selected['week_code'])}</strong></div>
+            <div><span>Số xã/phường</span><strong>{len(rows)}</strong></div>
+          </div>
+          {view_switch}
+          {report_table}
           <div class="actions" style="margin-top:12px"><a class="btn ok" href="/records/export.xlsx?{export_query}">Xuất Excel dữ liệu đang xem</a></div>
           <p class="sheet-footnote">Nguồn: {esc(selected['filename'])} · Import bởi {esc(selected['username'])} lúc {esc(selected['imported_at'])}. Mỗi sheet là một báo cáo; mỗi xã/phường là một dòng trong báo cáo.</p>
         </section>"""
@@ -2343,9 +2417,8 @@ def weekly_records_page(session, query):
     body = f"""
     <div class="container weekly-page">
       {take_flash(session)}
-      <div class="page-head"><div><h1>Tra cứu sheet báo cáo tuần</h1><div class="subtitle">Chọn một sheet đã import để đọc lại toàn bộ bảng theo bố cục Excel.</div></div>
+      <div class="page-head"><div><h1>Tra cứu báo cáo Diêm nghiệp</h1><div class="subtitle">Tra cứu số liệu theo kỳ báo cáo và xã/phường.</div></div>
         {'<a class="btn primary" href="/import-excel">Import Excel</a>' if is_chi_cuc_user(session) else ''}</div>
-      {salt_data_tabs(session, "/records")}
       <form class="card weekly-filter" method="get"><div class="field sheet-picker"><label>Sheet đã import</label><select name="batch">{options}</select></div><div class="field"><label>Xã/phường</label><select name="unit">{unit_options}</select></div><button class="btn primary">Mở bảng</button><div class="weekly-progress"><strong>{len(batches)}</strong><span>sheet báo cáo</span></div></form>
       {report}
     </div>"""
@@ -2396,7 +2469,7 @@ def export_weekly_xlsx(session, query=""):
     ws = wb.active
     ws.title = "Bao cao tuan"
     ws.append([f"BÁO CÁO TUẦN — {batch['sheet_name']}"])
-    ws.append([f"Nguồn: {batch['filename']} · Ngày chốt: {batch['report_date']} · Thời điểm xuất: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"])
+    ws.append([f"Nguồn: {batch['filename']} · Số liệu đến ngày: {batch['report_date']} · Thời điểm xuất: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"])
     ws.append([f"Điều kiện lọc: Xã/phường = {requested_unit or 'Tất cả trong phạm vi được phép'}"])
     ws.append(headers)
     for index, raw in enumerate(raw_rows, 1):
@@ -2785,18 +2858,25 @@ class Handler(BaseHTTPRequestHandler):
         con = db_conn()
         try:
             if path == "/ocop/import":
+                if parse_qs(query or "").get("reset", [""])[0] == "1":
+                    session.pop("ocop_import_upload", None)
+                    session.pop("ocop_import_preview", None)
                 title, body, status = ocop_import_pages.import_page(session, con, {"csrf_input": csrf_input, "take_flash": take_flash, "esc": esc})
                 self.send_html(base_page(title, body, session, active_path="/ocop/import"), status)
             elif path == "/ocop/import/preview":
                 if not is_chi_cuc_user(session):
                     self.send_html(base_page("403", '<div class="container"><div class="notice err">Không có quyền.</div></div>', session, active_path="/ocop/import"), 403)
                     return True
+                preview = session.get("ocop_import_preview")
                 upload = session.get("ocop_import_upload")
-                if not upload:
+                if not preview and upload:
+                    preview = ocop_import.parse_ocop_workbook(upload["content"], upload["filename"], admin_units.unit_lookup(con), upload["selected_sheet"])
+                    session["ocop_import_preview"] = preview
+                    session.pop("ocop_import_upload", None)
+                if not preview:
                     set_flash(session, "err", "Dữ liệu xem trước đã hết hạn. Hãy chọn lại file.")
                     self.redirect("/ocop/import")
                     return True
-                preview = ocop_import.parse_ocop_workbook(upload["content"], upload["filename"], admin_units.unit_lookup(con), upload["sheet_name"])
                 title, body, status = ocop_import_pages.preview_page(session, preview, {"csrf_input": csrf_input, "take_flash": take_flash, "esc": esc})
                 self.send_html(base_page(title, body, session, active_path="/ocop/import"), status)
             else:
@@ -2810,7 +2890,7 @@ class Handler(BaseHTTPRequestHandler):
         return True
 
     def handle_ocop_t2_post(self, path, session):
-        if path not in ("/ocop/import", "/ocop/import/confirm"):
+        if path not in ("/ocop/import", "/ocop/import/preview", "/ocop/import/confirm"):
             return False
         if not is_chi_cuc_user(session):
             self.send_html(base_page("403", '<div class="container"><div class="notice err">Chỉ tài khoản Chi cục được import OCOP.</div></div>', session, active_path="/ocop/import"), 403)
@@ -2824,27 +2904,60 @@ class Handler(BaseHTTPRequestHandler):
                 if not uploaded:
                     raise ocop_import.OcopImportError("Vui lòng chọn file Excel OCOP.")
                 filename = uploaded.get("filename") or ""
-                sheet_name = str(data.get("sheet_name", "Loc")).strip() or "Loc"
+                try:
+                    inspected = inspect_workbook(uploaded.get("content", b""), filename, "Loc")
+                except WorkbookInspectionError as exc:
+                    raise ocop_import.OcopImportError(str(exc)) from exc
+                session.pop("ocop_import_preview", None)
+                session["ocop_import_upload"] = {
+                    "content": uploaded["content"],
+                    "filename": filename,
+                    "sheet_names": inspected["sheet_names"],
+                    "recommended_sheet": inspected["recommended_sheet"],
+                    "selected_sheet": inspected["recommended_sheet"],
+                }
+                self.redirect("/ocop/import")
+                return True
+            if path == "/ocop/import/preview":
+                data = parse_body(self)
+                if not check_csrf(session, data):
+                    raise ocop_import.OcopImportError("Phiên làm việc không hợp lệ. Vui lòng tải lại trang.")
+                upload = session.get("ocop_import_upload")
+                if not upload:
+                    set_flash(session, "err", "Chưa có file Excel. Hãy chọn file trước.")
+                    self.redirect("/ocop/import")
+                    return True
+                sheet_name = str(data.get("sheet_name", "")).strip()
+                if sheet_name not in upload.get("sheet_names", []):
+                    raise ocop_import.OcopImportError("Sheet được chọn không còn trong workbook. Hãy chọn lại.")
+                upload["selected_sheet"] = sheet_name
                 con = db_conn()
                 try:
-                    ocop_import.parse_ocop_workbook(uploaded["content"], filename, admin_units.unit_lookup(con), sheet_name)
+                    preview = ocop_import.parse_ocop_workbook(upload["content"], upload["filename"], admin_units.unit_lookup(con), sheet_name)
                 finally:
                     con.close()
-                session["ocop_import_upload"] = {"content": uploaded["content"], "filename": filename, "sheet_name": sheet_name}
+                session["ocop_import_preview"] = preview
+                session.pop("ocop_import_upload", None)
                 self.redirect("/ocop/import/preview")
                 return True
             data = parse_body(self)
             if not check_csrf(session, data):
                 self.send_html(base_page("Lỗi", '<div class="container"><div class="notice err">Phiên làm việc không hợp lệ. Vui lòng tải lại trang.</div></div>', session, active_path="/ocop/import"), 403)
                 return True
+            preview = session.get("ocop_import_preview")
             upload = session.get("ocop_import_upload")
-            if not upload:
+            if not preview and upload:
+                con = db_conn()
+                try:
+                    preview = ocop_import.parse_ocop_workbook(upload["content"], upload["filename"], admin_units.unit_lookup(con), upload["selected_sheet"])
+                finally:
+                    con.close()
+            if not preview:
                 set_flash(session, "err", "Dữ liệu xem trước đã hết hạn. Hãy chọn lại file.")
                 self.redirect("/ocop/import/preview")
                 return True
             con = db_conn()
             try:
-                preview = ocop_import.parse_ocop_workbook(upload["content"], upload["filename"], admin_units.unit_lookup(con), upload["sheet_name"])
                 con.execute("BEGIN")
                 result = ocop_import.commit_ocop_preview(con, session, preview, data.get("mode", "publish"))
                 con.commit()
@@ -2854,6 +2967,7 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 con.close()
             session.pop("ocop_import_upload", None)
+            session.pop("ocop_import_preview", None)
             if result.get("already_published"):
                 set_flash(session, "ok", "File này đã được đồng bộ trước đó; không tạo dữ liệu trùng.")
             elif data.get("mode") == "stage_only":
@@ -3046,7 +3160,11 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/import-excel":
 
-            p = import_excel_page(session)
+            if parsed.query and parse_qs(parsed.query).get("reset", [""])[0] == "1":
+                session.pop("weekly_import_upload", None)
+                session.pop("weekly_import_preview", None)
+
+            p = import_excel_page(session, parsed.query)
 
             self.send_html(
                 p
@@ -3419,7 +3537,7 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
 
         # OCOP import has its own multipart/preview/commit flow.
-        if path in ("/ocop/import", "/ocop/import/confirm"):
+        if path in ("/ocop/import", "/ocop/import/preview", "/ocop/import/confirm"):
             sid, session = self.require_session()
             if session:
                 self.handle_ocop_t2_post(path, session)
@@ -3471,88 +3589,54 @@ class Handler(BaseHTTPRequestHandler):
         if self.handle_ocop(path, parsed.query, session, data):
             return
         if path == "/import-excel":
-
             if not is_chi_cuc_user(session):
-
-                self.send_html(
-                    base_page(
-                        "403",
-                        """
-                        <div class='container'>
-                            <div class='notice err'>
-                                Không có quyền import.
-                            </div>
-                        </div>
-                        """,
-                        session
-                    ),
-                    403
-                )
-
+                self.send_html(base_page("403", '<div class="container"><div class="notice err">Không có quyền import.</div></div>', session), 403)
                 return
-
-
-            uploaded = uploaded_files.get(
-                "excel_file"
-            )
-
-
+            uploaded = uploaded_files.get("excel_file")
             if not uploaded:
-
-                set_flash(
-                    session,
-                    "err",
-                    "Vui lòng chọn file Excel."
-                )
-
+                set_flash(session, "err", "Vui lòng chọn file Excel.")
                 self.redirect("/import-excel")
                 return
-
-
-            filename = uploaded["filename"]
-
-
-            if not filename.lower().endswith(".xlsx"):
-
-                set_flash(
-                    session,
-                    "err",
-                    "Chỉ hỗ trợ file .xlsx."
-                )
-
+            filename = uploaded.get("filename") or ""
+            try:
+                inspected = inspect_workbook(uploaded.get("content", b""), filename)
+            except WorkbookInspectionError as exc:
+                set_flash(session, "err", str(exc))
                 self.redirect("/import-excel")
                 return
-
-
-            # Giới hạn khoảng 20 MB
-            if len(uploaded["content"]) > 20 * 1024 * 1024:
-
-                set_flash(
-                    session,
-                    "err",
-                    "File Excel quá lớn."
-                )
-
+            # A new file replaces any unfinished preview/upload from the same
+            # session; only the selected workbook is retained for step 2.
+            session.pop("weekly_import_preview", None)
+            session["weekly_import_upload"] = {
+                "content": uploaded["content"],
+                "filename": filename,
+                "sheet_names": inspected["sheet_names"],
+                "recommended_sheet": inspected["recommended_sheet"],
+                "selected_sheet": inspected["recommended_sheet"],
+            }
+            self.redirect("/import-excel")
+            return
+        if path == "/import-excel/preview":
+            if not is_chi_cuc_user(session):
+                self.send_html(base_page("403", '<div class="container"><div class="notice err">Không có quyền import.</div></div>', session), 403)
+                return
+            upload = session.get("weekly_import_upload")
+            if not upload:
+                set_flash(session, "err", "Chưa có file Excel. Hãy chọn file trước.")
                 self.redirect("/import-excel")
                 return
-
-
-            report_date = data.get(
-                "report_date",
-                ""
-            ).strip()
-
-
-            sheet_name = data.get(
-                "sheet_name",
-                ""
-            ).strip()
-
-
+            sheet_name = str(data.get("sheet_name", "")).strip()
+            if sheet_name not in upload.get("sheet_names", []):
+                set_flash(session, "err", "Sheet được chọn không còn trong workbook. Hãy chọn lại.")
+                self.redirect("/import-excel")
+                return
+            report_date = str(data.get("report_date", "")).strip()
+            upload["selected_sheet"] = sheet_name
+            upload["report_date"] = report_date
             con = db_conn()
             try:
-                session["weekly_import_preview"] = parse_weekly_workbook(
-                    uploaded["content"], report_date, sheet_name, filename,
+                preview = parse_weekly_workbook(
+                    upload["content"], report_date, sheet_name, upload["filename"],
                     admin_units.unit_lookup(con),
                 )
             except WeeklyImportError as exc:
@@ -3561,6 +3645,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             finally:
                 con.close()
+            session["weekly_import_preview"] = preview
+            session.pop("weekly_import_upload", None)
             self.redirect("/import-excel/preview")
             return
         if path == "/import-excel/confirm":

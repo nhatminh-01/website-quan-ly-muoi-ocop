@@ -268,14 +268,14 @@ class _Pages:
             rank = row.get("recognition_star") or row.get("current_star")
             rendered.append(
                 '<tr>'
-                f'<td>{self.e(row.get("unit_name"))}</td><td>{self.e(row.get("entity_name"))}</td>'
-                f'<td>{self.e(row.get("facility_type"))}</td><td>{self.e(row.get("representative_name"))}</td>'
-                f'<td>{self.e(row.get("phone"))}</td><td><a href="/ocop/products/{self.e(row.get("id"))}">{self.e(row.get("name"))}</a></td>'
+                f'<td>{self.e(row.get("unit_name"))}</td>'
+                f'<td><a href="/ocop/products/{self.e(row.get("id"))}"><strong>{self.e(row.get("name"))}</strong></a></td>'
+                f'<td>{self.e(row.get("entity_name"))}</td>'
                 f'<td>{self.e(row.get("product_group"))}</td><td>{self.e((str(rank) + " sao") if rank else "")}</td>'
-                f'<td>{self.e(row.get("latest_recognition_date"))}</td><td>{self.e(row.get("latest_decision_number"))}</td>'
-                f'<td>{self.e(row.get("latest_decision_authority"))}</td><td>{self.e(row.get("latest_expiry_date"))}</td></tr>'
+                f'<td>{self.e(row.get("latest_recognition_date"))}</td><td>{self.e(row.get("latest_expiry_date"))}</td>'
+                f'<td><a class="btn small" href="/ocop/products/{self.e(row.get("id"))}">Chi tiết</a></td></tr>'
             )
-        table_rows = ''.join(rendered) or '<tr><td colspan="12" class="empty">Chưa có sản phẩm OCOP phù hợp.</td></tr>'
+        table_rows = ''.join(rendered) or '<tr><td colspan="8" class="empty">Chưa có sản phẩm OCOP phù hợp.</td></tr>'
         page = int(result.get("page") or 1)
         pages = int(result.get("pages") or 1)
         page_links = []
@@ -292,7 +292,7 @@ class _Pages:
             + '<div class="card"><div class="ocop-detail-heading"><h2 class="ocop-section-heading">Danh mục sản phẩm OCOP</h2>'
             + f'<span class="muted">{result.get("total", 0)} sản phẩm</span></div>'
             + '<div class="table-wrap"><table class="summary-table ocop-table ocop-catalog-table"><thead><tr>'
-            + '<th>Xã/phường</th><th>Chủ thể</th><th>Loại hình chủ thể</th><th>Người đại diện</th><th>Điện thoại</th><th>Tên sản phẩm</th><th>Nhóm sản phẩm</th><th>Hạng sao hiện tại</th><th>Ngày công nhận gần nhất</th><th>Số quyết định</th><th>Cơ quan ban hành</th><th>Ngày hết hạn</th>'
+            + '<th>Xã/phường</th><th>Tên sản phẩm</th><th>Chủ thể</th><th>Nhóm sản phẩm</th><th>Hạng sao</th><th>Ngày công nhận</th><th>Ngày hết hạn</th><th>Chi tiết</th>'
             + '</tr></thead><tbody>' + table_rows + '</tbody></table></div>' + pagination + '</div>'
         )
         return self.wrap("Tra cứu OCOP", "Tra cứu sản phẩm theo địa bàn, chủ thể, nhóm sản phẩm và hạng sao.", content, actions)
@@ -541,10 +541,18 @@ class _Pages:
                 ("Mã số thuế", row.get("tax_code")), ("Website", row.get("website")),
             ]
         elif kind == "products":
+            rank = row.get("recognition_star") or row.get("current_star")
             pairs = [
                 ("Tên sản phẩm", row.get("name")), ("Mã sản phẩm", row.get("ma_san_pham")),
                 ("Chủ thể", row.get("entity_name")), ("Mã cơ sở", row.get("ma_co_so")),
+                ("Loại hình chủ thể", row.get("facility_type")),
+                ("Người đại diện", row.get("representative_name")), ("Điện thoại", row.get("phone")),
                 ("Xã/phường", row.get("unit_name")), ("Nhóm sản phẩm", row.get("product_group")),
+                ("Hạng sao hiện tại", f"{rank} sao" if rank else ""),
+                ("Ngày công nhận gần nhất", row.get("latest_recognition_date")),
+                ("Số quyết định", row.get("latest_decision_number")),
+                ("Cơ quan ban hành", row.get("latest_decision_authority")),
+                ("Ngày hết hạn", row.get("latest_expiry_date")),
                 ("Bộ tiêu chí", ((row.get("criteria_set_code") or "") + " · " + (row.get("criteria_set_name") or "")).strip(" ·") or "Chưa gán"),
                 ("Nhóm phân loại", row.get("criteria_category")), ("Phiên bản tiêu chí", row.get("criteria_version")),
             ]

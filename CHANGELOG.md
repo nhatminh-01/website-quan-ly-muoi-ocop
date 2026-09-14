@@ -2,6 +2,13 @@
 
 Tài liệu này ghi lại các thay đổi đáng chú ý của hệ thống Quản lý muối – OCOP.
 
+## 2026-09-14 — Tinh chỉnh UI/UX tra cứu và import
+
+- Đơn giản hóa navigation: `/dashboard` hiển thị và active đúng “Trang chủ”, bỏ sidebar search và navigation Diêm nghiệp trùng.
+- Import Diêm nghiệp và OCOP dùng flow chọn file → chọn sheet; tự nhận diện kỳ báo cáo Diêm nghiệp và chỉ yêu cầu ngày thủ công khi thiếu căn cứ.
+- Tra cứu Diêm nghiệp mặc định là bảng tổng hợp, vẫn giữ toggle xem đủ bảng Excel và export đầy đủ dữ liệu.
+- Thu gọn catalogue OCOP; thông tin chủ thể, quyết định và lịch sử vẫn có trong product detail/export.
+
 ## 2026-09-14 — Giới hạn đơn vị trong tra cứu báo cáo tuần
 
 - Dropdown xã/phường tại `/salt/weekly` chỉ hiển thị các đơn vị có dòng dữ liệu
