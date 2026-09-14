@@ -74,6 +74,7 @@ def connection_kwargs() -> dict[str, Any]:
         "dbname": os.getenv("PGDATABASE", "ptnt_qd5277_dev"),
         "user": os.getenv("PGUSER", "postgres"),
         "password": os.getenv("PGPASSWORD") or None,
+        "sslmode": os.getenv("PGSSLMODE", "prefer"),
     }
 
 
