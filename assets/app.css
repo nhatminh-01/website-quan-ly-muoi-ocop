@@ -296,3 +296,21 @@ body.sidebar-collapsed{--sidebar-width:78px}
 .sheet-footnote{margin:9px 3px 0;color:var(--muted);font-size:12px}
 @media(max-width:760px){.validation-summary{grid-template-columns:repeat(2,minmax(0,1fr))}.weekly-progress{width:100%;margin-left:0}}
 @media(max-width:760px){.sheet-meta{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+.ocop-catalog-table{min-width:1700px}
+.ocop-catalog-table td,.ocop-catalog-table th{vertical-align:top;white-space:normal}
+.ocop-catalog-table td:nth-child(6){min-width:220px}
+.ocop-catalog-table td:nth-child(1),.ocop-catalog-table td:nth-child(8){white-space:nowrap}
+
+/* Simplified product home: two clear operational modules. */
+.module-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;max-width:1180px}
+.module-card{padding:26px;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}
+.module-card-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;color:var(--primary)}
+.module-card-heading h2{margin:5px 0 0;font-size:21px;color:#203149}
+.module-card-heading>.icon{width:30px;height:30px;stroke:var(--primary)}
+.module-card p{min-height:48px;color:var(--muted);line-height:1.6;margin:18px 0}
+.eyebrow{font-size:11px;font-weight:800;letter-spacing:1px;color:var(--primary)}
+.module-stats{display:flex;gap:24px;padding:14px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);color:var(--muted);font-size:13px}
+.module-stats strong{display:block;font-size:22px;line-height:1.2;color:var(--primary)}
+.module-card .actions{margin-top:18px}
+@media(max-width:760px){.module-grid{grid-template-columns:minmax(0,1fr)}.module-card p{min-height:0}}

@@ -63,7 +63,7 @@ def _filters(query):
     else:
         values = parse_qs(str(query or "").lstrip("?"))
     result = {}
-    for key in ("q", "unit", "year", "status", "group", "category", "page", "page_size"):
+    for key in ("q", "unit", "year", "status", "group", "star", "category", "page", "page_size"):
         value = values.get(key, "")
         if isinstance(value, (list, tuple)):
             value = value[0] if value else ""
@@ -86,7 +86,7 @@ def render(path, query, session, con, helpers):
         return None
     page = _Pages(session, con, helpers, _filters(query))
     if clean_path == "/ocop":
-        return page.overview()
+        return page.catalog_page()
     parts = clean_path.strip("/").split("/")
     kind = parts[1]
     if kind == "criteria":
@@ -219,6 +219,7 @@ class _Pages:
             fields += self.input("year", "Năm đánh giá", f.get("year", ""), "number", attrs='min="2000" max="2100" step="1" placeholder="Tất cả năm"')
         if kind == "products":
             fields += self.input("group", "Nhóm sản phẩm", f.get("group", ""), attrs='maxlength="100" placeholder="Tất cả nhóm"')
+            fields += self.select("star", "Hạng sao", [("3", "3 sao"), ("4", "4 sao"), ("5", "5 sao")], f.get("star", ""), empty="Tất cả hạng")
         if kind and kind != "criteria":
             states = ("active", "archived") if kind != "applications" else (
                 "draft", "submitted", "checking", "returned", "eligible", "cancelled"
@@ -247,7 +248,57 @@ class _Pages:
             '<div class="actions">' + "".join(links) + "</div></nav>"
         )
 
+    def catalog_page(self):
+        """Primary OCOP screen: a read-only business catalogue and export."""
+        result = svc.list_products(self.con, self.session, self.filters)
+        rows = [dict(r) for r in result.get("items", [])]
+        export_filters = {k: v for k, v in self.filters.items() if k not in ("page", "page_size")}
+        export_query = urlencode(export_filters)
+        unit_field = self.unit_field(self.filters.get("unit", ""), True)
+        star_options = self.select("star", "Hạng sao", [("3", "3 sao"), ("4", "4 sao"), ("5", "5 sao")], self.filters.get("star", ""), empty="Tất cả hạng")
+        filter_form = (
+            '<div class="card"><form class="toolbar" action="/ocop" method="get">'
+            f'<div class="field"><label>Từ khóa</label><input name="q" value="{self.e(self.filters.get("q", ""))}" maxlength="200" placeholder="Tên sản phẩm hoặc chủ thể…"></div>'
+            f'{unit_field}{star_options}'
+            f'<div class="field"><label>Nhóm sản phẩm</label><input name="group" value="{self.e(self.filters.get("group", ""))}" maxlength="100" placeholder="Tất cả nhóm"></div>'
+            '<button type="submit" class="btn primary">Tra cứu</button><a class="btn" href="/ocop">Xóa lọc</a></form></div>'
+        )
+        rendered = []
+        for row in rows:
+            rank = row.get("recognition_star") or row.get("current_star")
+            rendered.append(
+                '<tr>'
+                f'<td>{self.e(row.get("unit_name"))}</td><td>{self.e(row.get("entity_name"))}</td>'
+                f'<td>{self.e(row.get("facility_type"))}</td><td>{self.e(row.get("representative_name"))}</td>'
+                f'<td>{self.e(row.get("phone"))}</td><td><a href="/ocop/products/{self.e(row.get("id"))}">{self.e(row.get("name"))}</a></td>'
+                f'<td>{self.e(row.get("product_group"))}</td><td>{self.e((str(rank) + " sao") if rank else "")}</td>'
+                f'<td>{self.e(row.get("latest_recognition_date"))}</td><td>{self.e(row.get("latest_decision_number"))}</td>'
+                f'<td>{self.e(row.get("latest_decision_authority"))}</td><td>{self.e(row.get("latest_expiry_date"))}</td></tr>'
+            )
+        table_rows = ''.join(rendered) or '<tr><td colspan="12" class="empty">Chưa có sản phẩm OCOP phù hợp.</td></tr>'
+        page = int(result.get("page") or 1)
+        pages = int(result.get("pages") or 1)
+        page_links = []
+        if page > 1:
+            page_links.append(f'<a class="btn small" href="/ocop?{urlencode({**export_filters, "page": page - 1})}">← Trước</a>')
+        if page < pages:
+            page_links.append(f'<a class="btn small" href="/ocop?{urlencode({**export_filters, "page": page + 1})}">Sau →</a>')
+        pagination = f'<div class="ocop-pagination"><span class="muted">{result.get("total", 0)} sản phẩm · Trang {page}/{pages}</span><div class="actions">{"".join(page_links)}</div></div>'
+        actions = '<a class="btn ok" href="/ocop/export.xlsx' + (('?' + export_query) if export_query else '') + '">Xuất Excel</a>'
+        if self.admin:
+            actions = '<a class="btn primary" href="/ocop/import">Import dữ liệu OCOP</a>' + actions
+        content = (
+            filter_form
+            + '<div class="card"><div class="ocop-detail-heading"><h2 class="ocop-section-heading">Danh mục sản phẩm OCOP</h2>'
+            + f'<span class="muted">{result.get("total", 0)} sản phẩm</span></div>'
+            + '<div class="table-wrap"><table class="summary-table ocop-table ocop-catalog-table"><thead><tr>'
+            + '<th>Xã/phường</th><th>Chủ thể</th><th>Loại hình chủ thể</th><th>Người đại diện</th><th>Điện thoại</th><th>Tên sản phẩm</th><th>Nhóm sản phẩm</th><th>Hạng sao hiện tại</th><th>Ngày công nhận gần nhất</th><th>Số quyết định</th><th>Cơ quan ban hành</th><th>Ngày hết hạn</th>'
+            + '</tr></thead><tbody>' + table_rows + '</tbody></table></div>' + pagination + '</div>'
+        )
+        return self.wrap("Tra cứu OCOP", "Tra cứu sản phẩm theo địa bàn, chủ thể, nhóm sản phẩm và hạng sao.", content, actions)
+
     def overview(self):
+        """Deprecated workflow dashboard retained for internal compatibility."""
         data = svc.dashboard(self.con, self.session, self.filters)
         counts = data.get("counts", data)
         cards = []
