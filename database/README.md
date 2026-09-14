@@ -46,6 +46,14 @@ Start-Service -Name 'postgresql-x64-17'
 Stop-Service -Name 'postgresql-x64-17'
 ```
 
+## Khởi động web bằng một lần bấm
+
+Chạy `START_WINDOWS.bat` ở thư mục gốc repository. Script sẽ kiểm tra service
+`postgresql-x64-17`, thử khởi động service nếu đang dừng, áp dụng các migration
+ứng dụng chưa có trong `app.schema_migrations`, kiểm tra kết nối rồi mới chạy
+`server.py`. Nếu Windows báo thiếu quyền khi start service, mở file bằng
+**Run as administrator** hoặc khởi động PostgreSQL thủ công trong Services.
+
 ## Kết nối và migration
 
 ```powershell
