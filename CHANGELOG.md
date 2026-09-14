@@ -4,6 +4,8 @@ Tài liệu này ghi lại các thay đổi đáng chú ý của hệ thống Qu
 
 ## Chưa phát hành — PostgreSQL dùng chung cho nhóm
 
+- `START_WINDOWS.bat` nay là launcher một lần bấm: kiểm tra/khởi động PostgreSQL service, áp dụng migration còn thiếu, healthcheck rồi mới chạy web.
+- Parser OCOP bỏ qua giá trị lỗi Excel như `#REF!` trong các ô chủ thể/địa bàn và kế thừa ngữ cảnh ô gộp phía trên; tránh báo giả lỗi thiếu xã cho các dòng tiếp theo.
 - PostgreSQL trở thành backend duy nhất; loại bỏ nhánh runtime, launcher, migration, test và database nhúng SQLite khỏi repository.
 - Loại bỏ 5 file database từng được Git theo dõi và thêm quy tắc chặn `*.db`, `*.db-wal`, `*.db-shm`.
 - Thêm `POSTGRESQL_TEAM_GUIDE.md` hướng dẫn thành viên thứ hai cài dependency và kết nối máy chủ `192.168.1.41`.

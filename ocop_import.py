@@ -30,6 +30,21 @@ def _text(value) -> str:
     return " ".join(unicodedata.normalize("NFC", str(value)).split()).strip()
 
 
+_EXCEL_ERROR_VALUES = {"#REF!", "#DIV/0!", "#VALUE!", "#N/A", "#NAME?", "#NUM!", "#NULL!"}
+
+
+def _context_text(value) -> str:
+    """Read a subject-level cell, treating broken Excel formulas as blank.
+
+    Historical workbooks use formulas in merged continuation rows.  When a
+    referenced row was deleted Excel stores ``#REF!`` in those cells; it is
+    not a real subject or administrative unit and must not replace the last
+    valid merged-cell context.
+    """
+    text = _text(value)
+    return "" if text.upper() in _EXCEL_ERROR_VALUES else text
+
+
 def _key(value) -> str:
     return _text(value).casefold()
 
@@ -184,7 +199,7 @@ def parse_ocop_workbook(file_bytes: bytes, filename: str, unit_lookup, sheet_nam
 
             errors: list[str] = []
             warnings: list[str] = []
-            entity_name_raw = _text(values[4])
+            entity_name_raw = _context_text(values[4])
             current_same_entity = bool(
                 entity_context and entity_name_raw and _key(entity_name_raw) == _key(entity_context["entity_name"])
             )
@@ -195,18 +210,18 @@ def parse_ocop_workbook(file_bytes: bytes, filename: str, unit_lookup, sheet_nam
                         ("business_type", 3), ("entity_name", 4), ("source_unit_name", 5),
                         ("address", 6), ("representative_name", 7), ("phone", 8),
                     ):
-                        incoming = _text(values[index])
+                        incoming = _context_text(values[index])
                         if incoming:
                             context[key] = incoming
                     entity_context = context
                 else:
                     entity_context = {
-                        "business_type": _text(values[3]),
+                        "business_type": _context_text(values[3]),
                         "entity_name": entity_name_raw,
-                        "source_unit_name": _text(values[5]),
-                        "address": _text(values[6]),
-                        "representative_name": _text(values[7]),
-                        "phone": _text(values[8]),
+                        "source_unit_name": _context_text(values[5]),
+                        "address": _context_text(values[6]),
+                        "representative_name": _context_text(values[7]),
+                        "phone": _context_text(values[8]),
                     }
             elif entity_context:
                 # A blank subject is the workbook's merged-cell continuation convention.
