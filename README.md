@@ -90,9 +90,11 @@ Các cột **Cộng** và **Năng suất bình quân** được tính tự độ
 
 ## Chạy trên Windows
 
-1. Cài PostgreSQL và chuẩn bị môi trường theo `database\README.md`.
-2. Sao chép `database\.env.example` thành `database\.env`, rồi điền thông tin kết nối.
-3. Chạy website:
+1. Cài Python và chuẩn bị môi trường theo `database\README.md`.
+2. Trên máy chủ production, đặt secret tại `database\.env.production` (không commit).
+   Máy cộng tác viên có thể dùng `database\.env` với cùng thông tin production được
+   gửi qua kênh riêng.
+3. Chạy website bằng:
 
 ```bat
 START_WINDOWS.bat
@@ -130,11 +132,13 @@ Ví dụ máy chủ có IP `192.168.1.20` thì các xã/phường truy cập `ht
 
 ## Dữ liệu lưu ở đâu?
 
-Dữ liệu vận hành nằm trong PostgreSQL database `ptnt_qd5277_dev`: schema `app`
-cho nghiệp vụ website, `qd5277` cho dữ liệu chuẩn và `staging` cho dữ liệu nhập thô.
-Repository không theo dõi file database; hai thành viên kết nối trực tiếp tới cùng máy chủ.
+Dữ liệu vận hành nằm trong PostgreSQL production database `ocop_db`: schema `app`
+cho nghiệp vụ website, `qd5277` cho dữ liệu tổng hợp chuẩn, `qd5333` cho dữ liệu
+chi tiết chuẩn và `staging` cho dữ liệu nhập thô. Repository không theo dõi file
+database; hai thành viên kết nối trực tiếp tới cùng máy chủ `10.206.16.19`.
 
-Mật khẩu PostgreSQL chỉ lưu trong `database\.env`, không ghi cứng hoặc commit vào source.
+Mật khẩu PostgreSQL chỉ lưu trong `database\.env` hoặc `database\.env.production`,
+không ghi cứng hoặc commit vào source.
 Nên sao lưu PostgreSQL định kỳ trước khi đưa vào vận hành chính thức.
 
 ## Lưu ý trước khi đưa vào vận hành thật

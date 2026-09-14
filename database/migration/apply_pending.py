@@ -27,7 +27,8 @@ def main() -> int:
     settings = load_settings()
     with psycopg.connect(
         host=settings.host, port=settings.port, dbname=settings.dbname,
-        user=settings.user, password=settings.password, autocommit=True,
+        user=settings.user, password=settings.password, sslmode=settings.sslmode,
+        autocommit=True,
     ) as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT to_regclass('app.schema_migrations')")

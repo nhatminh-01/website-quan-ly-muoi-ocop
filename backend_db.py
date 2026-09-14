@@ -35,6 +35,7 @@ class DatabaseSettings:
     dbname: str
     user: str
     password: str | None
+    sslmode: str
 
 
 def load_settings(env_file: str | os.PathLike[str] | None = None) -> DatabaseSettings:
@@ -50,6 +51,7 @@ def load_settings(env_file: str | os.PathLike[str] | None = None) -> DatabaseSet
         dbname=os.getenv("PGDATABASE", "ptnt_qd5277_dev"),
         user=os.getenv("PGUSER", "postgres"),
         password=os.getenv("PGPASSWORD") or None,
+        sslmode=os.getenv("PGSSLMODE", "prefer"),
     )
 
 
@@ -86,9 +88,10 @@ def connect(*, autocommit: bool = False) -> psycopg.Connection:
         dbname=settings.dbname,
         user=settings.user,
         password=settings.password,
+        sslmode=settings.sslmode,
         autocommit=autocommit,
         row_factory=hybrid_row,
-        options="-c search_path=app,qd5277,staging,public",
+        options="-c search_path=app,qd5333,qd5277,staging,public",
         application_name="ptnt_salt_ocop_web",
     )
 
@@ -301,7 +304,7 @@ def healthcheck() -> dict[str, object]:
             """
             SELECT table_schema, COUNT(*)::INTEGER AS tables
             FROM information_schema.tables
-            WHERE table_schema IN ('app', 'qd5277', 'staging')
+            WHERE table_schema IN ('app', 'qd5333', 'qd5277', 'staging')
             GROUP BY table_schema
             ORDER BY table_schema
             """

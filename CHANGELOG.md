@@ -2,6 +2,34 @@
 
 Tài liệu này ghi lại các thay đổi đáng chú ý của hệ thống Quản lý muối – OCOP.
 
+## 2026-09-14 — Triển khai PostgreSQL production
+
+- Khởi tạo database production `ocop_db` trên PostgreSQL 17.6 từ
+  `database/.env.production`; credential không được commit.
+- Hoàn thiện schema canonical QĐ 5277: **30/30 bảng** qua
+  `014_qd5277_full_schema.sql` (bổ sung 11 bảng còn thiếu).
+- Triển khai schema QĐ 5333 non-spatial: **22/22 bảng** qua
+  `015_qd5333_non_spatial.sql`.
+- Bổ sung runtime production qua `016_app_runtime_compatibility.sql` và index
+  FK qua `017_production_indexes.sql`; `app.ocop_import_batches` là view tương
+  thích trỏ về staging, còn `app.code_mappings` lưu mapping tạm → canonical.
+- Thêm `bootstrap_production.py` (chỉ khởi tạo DB trống, không drop/truncate),
+  `migrate_to_production.py` (allow-list, insert-only) và
+  `validate_production.py`.
+- Đã chuyển chọn lọc 10 tài khoản, credential/quyền, danh mục hành chính,
+  404 chủ thể, 1.024 sản phẩm, 1.069 lịch sử công nhận, 16 bản ghi muối tuần,
+  lịch sử import và dữ liệu canonical liên quan; không sao chép nguyên DB dev.
+- `START_WINDOWS.bat` ưu tiên `.env.production` khi có tệp secret (trực tiếp
+  chạy lệnh Python vẫn dùng `database/.env` nếu không đặt `PTNT_DB_ENV_FILE`);
+  source không ghi cứng thông tin kết nối.
+- Smoke test production: healthcheck PostgreSQL 17.6, đăng nhập, dashboard,
+  báo cáo muối, OCOP, tiêu chí và tra cứu tuần đều HTTP 200.
+- Báo cáo cấu trúc tại `database/validation/production_schema_report.md`;
+  schema issues tại `database/schema_issues.md`.
+- PostGIS chưa được DBA cấp quyền: 4 bảng hình học QĐ 5333
+  (`QuyHoachDatLamMuoi`, `VungDatLamMuoi`, `KhoDuTruMuoi`, `SanPhamOCOP`)
+  giữ trạng thái **PENDING_POSTGIS**; không tạo Geometry giả và chưa đoán SRID.
+
 ## Chưa phát hành — PostgreSQL dùng chung cho nhóm
 
 - `START_WINDOWS.bat` nay là launcher một lần bấm: kiểm tra/khởi động PostgreSQL service, áp dụng migration còn thiếu, healthcheck rồi mới chạy web.

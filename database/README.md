@@ -1,6 +1,9 @@
-# Diêm nghiệp - kiểm thử CSDL QĐ 5277
+# Database PTNT — production và development
 
-Dự án development cục bộ để import thử sheet `21.8-Tuan 34` từ `CCPTNT Diemnghiep.xlsx`. Không triển khai QĐ 5333 hoặc GIS.
+Repository hỗ trợ PostgreSQL production `ocop_db` (17.6) và một database dev
+riêng để kiểm thử. Production dùng `.env.production` (tệp secret không commit);
+dev dùng `.env`. QĐ 5277 canonical và QĐ 5333 non-spatial được triển khai bằng
+các migration đánh số 014–015; bốn bảng hình học QĐ 5333 chờ PostGIS.
 
 ## Mã hành chính
 
@@ -16,7 +19,7 @@ trong khi staging vẫn giữ nguyên giá trị nguồn để truy vết.
 - pgAdmin 4 v9.17, đi kèm bộ cài PostgreSQL
 - Python packages đã cài: `openpyxl 3.1.5`, `psycopg 3.3.5`, `python-dotenv 1.2.3`
 
-## Database
+## Database dev (tùy chọn)
 
 - Database: `ptnt_qd5277_dev`
 - Schema chuẩn: `qd5277`
@@ -24,6 +27,13 @@ trong khi staging vẫn giữ nguyên giá trị nguồn để truy vết.
 - Schema ứng dụng: `app`
 - Sheet: `21.8-Tuan 34`
 - Snapshot được giữ trong staging: `2026-08-21`
+
+## Database production
+
+- Database: `ocop_db` trên PostgreSQL 17.6 tại máy chủ được cấp phát.
+- Schema: `qd5277` (30 bảng canonical), `qd5333` (22 bảng non-spatial),
+  `app` (runtime) và `staging` (raw import).
+- Secret kết nối: `database/.env.production`, chỉ lưu cục bộ trên máy được ủy quyền.
 
 ## Cài môi trường Python
 
@@ -77,8 +87,34 @@ mapping tài khoản còn thiếu khi tên khớp duy nhất. Migration chạy t
 chạy lại an toàn, không xóa dữ liệu hoặc ghi đè tên/trạng thái/mapping đã có.
 Server kiểm tra schema đã nâng cấp; không tự seed danh mục PostgreSQL lúc khởi động.
 
-Sau khi hoàn tất schema, máy chủ có thể tạo role dùng chung cho nhóm bằng
-`sql\team_role_setup.sql`. Xem [hướng dẫn kết nối nhóm](../POSTGRESQL_TEAM_GUIDE.md).
+## Khởi tạo PostgreSQL production
+
+Production dùng PostgreSQL 17.6, database `ocop_db` và cấu hình không commit tại
+`database/.env.production`. Tệp này phải có `PGHOST`, `PGPORT`, `PGDATABASE`,
+`PGUSER`, `PGPASSWORD` và tùy chọn `PGSSLMODE`; tuyệt đối không đưa mật khẩu vào
+GitHub.
+
+Chỉ chạy bootstrap một lần trên database production mới và đang trống:
+
+```powershell
+cd <thu-muc-repo>
+database\.venv\Scripts\python.exe database\migration\bootstrap_production.py --env-file database\.env.production
+database\.venv\Scripts\python.exe database\validation\validate_production.py --env-file database\.env.production
+```
+
+Bootstrap thực hiện tuần tự QĐ 5277 (30 bảng), QĐ 5333 non-spatial (22 bảng),
+schema app/staging và index. Script từ chối chạy nếu đã có bảng trong các schema
+đích để tránh ghi đè dữ liệu. Các lần sau dùng `migration\apply_pending.py`;
+không chạy lại bootstrap.
+
+Bốn bảng hình học QĐ 5333 (`QuyHoachDatLamMuoi`, `VungDatLamMuoi`,
+`KhoDuTruMuoi`, `SanPhamOCOP`) đang **PENDING_POSTGIS** vì role ứng dụng chưa
+được cấp quyền bật PostGIS. Không dùng TEXT/JSON thay cho Geometry và chưa đoán
+SRID. Xem `validation/production_schema_report.md` và `schema_issues.md`.
+
+Production đã có role ứng dụng do DBA cấp (hiện là `ocop`). Không chạy
+`team_role_setup.sql` trên `ocop_db` nếu chưa được DBA duyệt; xem
+[hướng dẫn kết nối nhóm](../POSTGRESQL_TEAM_GUIDE.md) để cấu hình máy cộng tác viên.
 
 Kết nối thủ công:
 
