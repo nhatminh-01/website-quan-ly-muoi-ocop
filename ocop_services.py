@@ -161,15 +161,20 @@ ENTITY_SELECT = """SELECT e.*,c.TenCoSo AS name,c.LoaiCoSo AS facility_type,c.Di
     FROM ocop_entities e JOIN DM_CoSo c ON c.Ma_CoSo=e.ma_co_so
     JOIN DM_DonViHanhChinh d ON d.Ma_DonViHanhChinh=c.Ma_DonViHanhChinh"""
 PRODUCT_SELECT = """SELECT p.*,p.ten_san_pham AS name,c.TenCoSo AS entity_name,d.TenDonVi AS unit_name,
-    e.id AS entity_id,e.archived_at AS entity_archived_at,
+    c.LoaiCoSo AS facility_type,e.id AS entity_id,e.archived_at AS entity_archived_at,
+    e.representative_name,e.phone,
     cs.code AS criteria_set_code,cs.name AS criteria_set_name,cs.product_category AS criteria_category,
     cs.product_group AS criteria_group,cs.product_subgroup AS criteria_subgroup,
     cs.legal_document AS criteria_legal_document,cs.version AS criteria_version,
-    cs.effective_from AS criteria_effective_from,cs.active AS criteria_set_active
-    FROM ocop_products p JOIN DM_CoSo c ON c.Ma_CoSo=p.ma_co_so
-    JOIN ocop_entities e ON e.ma_co_so=p.ma_co_so
-    JOIN DM_DonViHanhChinh d ON d.Ma_DonViHanhChinh=p.ma_don_vi_hanh_chinh
-    LEFT JOIN ocop_criteria_sets cs ON cs.id=p.criteria_set_id"""
+    cs.effective_from AS criteria_effective_from,cs.active AS criteria_set_active,
+    r.star_rank AS recognition_star,r.recognition_date AS latest_recognition_date,
+    r.decision_number AS latest_decision_number,r.decision_authority AS latest_decision_authority,
+    r.expiry_date AS latest_expiry_date
+    FROM app.ocop_products p JOIN qd5277.DM_CoSo c ON c.Ma_CoSo=p.ma_co_so
+    JOIN app.ocop_entities e ON e.ma_co_so=p.ma_co_so
+    JOIN qd5277.DM_DonViHanhChinh d ON d.Ma_DonViHanhChinh=p.ma_don_vi_hanh_chinh
+    LEFT JOIN app.ocop_criteria_sets cs ON cs.id=p.criteria_set_id
+    LEFT JOIN app.ocop_recognitions r ON r.product_id=p.id AND r.is_current=TRUE"""
 APPLICATION_SELECT = """SELECT a.*,p.ten_san_pham AS product_name,p.ma_san_pham,p.ma_co_so,
     p.ma_don_vi_hanh_chinh,p.product_group,c.TenCoSo AS entity_name,d.TenDonVi AS unit_name,
     cs.code AS criteria_set_code,cs.name AS criteria_set_name,cs.product_category AS criteria_category,
@@ -304,6 +309,8 @@ def _listing(con, session, filters, select, unit_column, search_columns, status_
         if value:
             if kind == "year":
                 value = _number(value, 2000, 2100)
+            elif kind == "int":
+                value = _number(value, 0, 5)
             where.append(column + "=?")
             args.append(value)
     page = _number(_value(filters, "page", 1), 1, 10000000)
@@ -329,7 +336,22 @@ def list_entities(con, session, filters=None):
 def list_products(con, session, filters=None):
     return _listing(con, session, filters, PRODUCT_SELECT, "p.ma_don_vi_hanh_chinh",
         ("p.ten_san_pham", "p.ma_san_pham", "c.TenCoSo"), "p.status",
-        {"updated_at": "p.updated_at", "name": "p.ten_san_pham", "created_at": "p.created_at"}, (("group", "p.product_group", "text"),))
+        {"updated_at": "p.updated_at", "name": "p.ten_san_pham", "created_at": "p.created_at"},
+        (("group", "p.product_group", "text"), ("star", "COALESCE(r.star_rank,p.current_star)", "int")))
+
+
+def export_products(con, session, filters=None):
+    """Return every filtered product for a business-facing Excel export."""
+    filters = dict(filters or {})
+    items = []
+    page = 1
+    while True:
+        result = list_products(con, session, {**filters, "page": page, "page_size": 200})
+        items.extend(dict(row) for row in result["items"])
+        if page >= result["pages"]:
+            break
+        page += 1
+    return items
 
 
 def list_applications(con, session, filters=None):

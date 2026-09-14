@@ -7,10 +7,24 @@ PostgreSQL dùng chung; repository không chứa database nhúng hoặc bản sa
 - DDL, migration, ETL và validation nằm trong thư mục `database`.
 - Lịch sử thay đổi nằm tại [CHANGELOG.md](CHANGELOG.md).
 
-## OCOP giai đoạn 2
+## Giao diện nghiệp vụ tinh giản
+
+Sau đăng nhập, sản phẩm chỉ đưa ra hai phân hệ:
+
+- **Diêm nghiệp**: `Import báo cáo tuần` và `Tra cứu / Xuất báo cáo` tại `/records`.
+- **OCOP**: `Import dữ liệu OCOP` (Chi cục) và catalogue `Tra cứu / Xuất báo cáo` tại `/ocop`.
+
+Tra cứu Diêm nghiệp chọn sheet/tuần và xã/phường rồi xuất đúng các dòng đang xem.
+Tra cứu OCOP lọc xã/phường, từ khóa, nhóm sản phẩm và hạng sao; file xuất chỉ chứa
+trường nghiệp vụ, không có ID nội bộ. Các route hồ sơ đánh giá, bộ tiêu chí, reviewer
+workflow và màn hình chuẩn QĐ 5277 vẫn giữ ở backend để tương thích dữ liệu nhưng
+không còn xuất hiện trong menu người dùng.
+
+## OCOP giai đoạn 2 (nền dữ liệu nội bộ)
 
 Hệ thống có nền tảng chủ thể, sản phẩm, hồ sơ, phân quyền và 26 bộ tiêu chí OCOP dạng dữ liệu
-động theo Quyết định 26/2026/QĐ-TTg. Giao diện tra cứu nằm tại `/ocop/criteria`.
+động theo Quyết định 26/2026/QĐ-TTg. Các bảng này vẫn giữ để bảo toàn dữ liệu; giao diện
+tra cứu chính hiện tại là catalogue `/ocop`. Route `/ocop/criteria` chỉ dùng nội bộ.
 
 OCOP giai đoạn 2 chưa có chấm điểm Hội đồng, chứng nhận, đồng bộ kết quả chính thức hoặc upload minh chứng.
 Giai đoạn 2 mới nạp 26 bộ sản phẩm và khung A/B/C (40/25/35); tiêu chí con và lựa chọn điểm sẽ được nạp ở giai đoạn chấm điểm.
@@ -77,16 +91,14 @@ Hệ thống bám theo bảng Excel mẫu gồm:
 
 Các cột **Cộng** và **Năng suất bình quân** được tính tự động để hạn chế sai số cộng tay.
 
-## Luồng nghiệp vụ
+## Luồng nghiệp vụ hiện tại
 
-1. Xã/phường đăng nhập tài khoản riêng.
-2. Nhập và lưu bản nháp số liệu theo ngày/kỳ chốt.
-3. Đơn vị bấm **Gửi Chi cục**.
-4. Chi cục Phát triển nông thôn xem số liệu của tất cả đơn vị.
-5. Chi cục chọn **Duyệt** hoặc **Trả chỉnh sửa** và ghi ý kiến.
-6. Số liệu đã duyệt được đưa lên Dashboard tổng hợp.
-7. Có thể tra cứu theo đơn vị, trạng thái, thời gian và xuất Excel.
-8. Hệ thống lưu nhật ký các lần tạo, sửa, gửi, duyệt, trả chỉnh sửa.
+1. Chi cục chọn file Excel Diêm nghiệp hoặc OCOP.
+2. Hệ thống preview và validate trước khi ghi staging/production.
+3. Import lại cùng file được nhận diện idempotent, không tạo bản ghi trùng.
+4. Người dùng tra cứu theo xã/phường và các bộ lọc phụ, đọc bảng nghiệp vụ.
+5. Nút **Xuất Excel** tạo file theo đúng bộ lọc hiện tại.
+6. Đăng nhập, phân quyền, audit và bảng workflow cũ vẫn giữ nội bộ.
 
 ## Chạy trên Windows
 

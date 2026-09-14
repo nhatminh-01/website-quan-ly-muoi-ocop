@@ -38,7 +38,7 @@ import ocop_pages
 from datetime import datetime, date
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, quote, urlparse
+from urllib.parse import parse_qs, quote, urlencode, urlparse
 from email.parser import BytesParser
 from email.policy import default
 
@@ -612,14 +612,12 @@ def sidebar_group(group, items, current):
 
 
 def salt_data_tabs(session, current):
-    """Keep weekly lookup visible inside the salt-data workflow."""
+    """Small navigation for the three supported salt operations."""
     items = [
-        ("/records", "Dữ liệu báo cáo"),
-        ("/salt/weekly", "Tra cứu theo tuần"),
+        ("/records", "Tra cứu / Xuất báo cáo"),
     ]
     if is_chi_cuc_user(session):
         items.append(("/import-excel", "Import Excel tuần"))
-        items.append(("/standard-data", "Dữ liệu chuẩn QĐ 5277"))
     links = ''.join(
         f'<a class="salt-tab{" active" if href == current else ""}" href="{href}"'
         + (' aria-current="page"' if href == current else '')
@@ -648,13 +646,10 @@ def base_page(title, body, session=None, active_path=None):
             "Dữ liệu chuẩn hóa": "/records",
         }.get(title, "/records")
         current = active_path or ("/standard-data" if title == "Dữ liệu chuẩn hóa" else current)
-        salt_items = [("/records", "table", "Dữ liệu sản xuất muối"),
-                      ("/records/new", "plus", "Nhập số liệu"),
-                      ("/salt/weekly", "table", "Tra cứu báo cáo tuần")]
-        system_items = []
+        salt_items = [("/records", "table", "Tra cứu / Xuất báo cáo")]
         if is_chi_cuc_user(session):
-            salt_items.append(("/import-excel", "download", "Import báo cáo tuần"))
-            salt_items.append(("/standard-data", "file", "Dữ liệu chuẩn hóa"))
+            salt_items.insert(0, ("/import-excel", "download", "Import báo cáo tuần"))
+        system_items = []
         if can_manage_users(session):
             system_items.append(("/users", "users", "Tài khoản"))
             system_items.append(("/admin-units", "location", "Danh mục đơn vị hành chính"))
@@ -663,11 +658,10 @@ def base_page(title, body, session=None, active_path=None):
         nav_groups = [("TỔNG QUAN", [("/dashboard", "dashboard", "Bảng giám sát")]),
                       ("DIÊM NGHIỆP", salt_items)]
         if ocop_available():
-            nav_groups.append(("OCOP", [("/ocop", "dashboard", "Tổng quan OCOP"),
-                                        ("/ocop/products", "table", "Sản phẩm OCOP"),
-                                        ("/ocop/entities", "home", "Chủ thể OCOP"),
-                                        ("/ocop/applications", "file", "Hồ sơ đánh giá"),
-                                        ("/ocop/criteria", "table", "Bộ tiêu chí")]))
+            ocop_items = [("/ocop", "table", "Tra cứu / Xuất báo cáo")]
+            if is_chi_cuc_user(session):
+                ocop_items.append(("/ocop/import", "download", "Import dữ liệu OCOP"))
+            nav_groups.append(("OCOP", ocop_items))
         nav_groups.append(("HỆ THỐNG", system_items))
         nav = [sidebar_group(group, items, current) for group, items in nav_groups]
         name = account_display_name(session)
@@ -706,28 +700,10 @@ _base_page_core = base_page
 _ocop_render_core = ocop_pages.render
 
 
-def _t2_sidebar_link(href, symbol, label, active=False):
-    active_attr = " active" if active else ""
-    current = ' aria-current="page"' if active else ""
-    return f'<a class="sidebar-link{active_attr}" href="{href}" title="{label}"{current}>{icon(symbol)}<span class="sidebar-label">{label}</span></a>'
-
-
 def _t2_base_page(title, body, session=None, active_path=None):
-    requested = active_path or ""
-    group_active = "/ocop" if requested in ("/ocop/import", "/ocop/recognitions") else active_path
-    rendered = _base_page_core(title, body, session, active_path=group_active)
-    if not session:
-        return rendered
-    start = rendered.find('<details class="sidebar-group" data-group="ocop"')
-    if start < 0:
-        return rendered
-    end = rendered.find("</div></details>", start)
-    if end < 0:
-        return rendered
-    extra = _t2_sidebar_link("/ocop/recognitions", "file", "Lịch sử công nhận", requested == "/ocop/recognitions")
-    if is_chi_cuc_user(session):
-        extra += _t2_sidebar_link("/ocop/import", "download", "Import Excel OCOP", requested == "/ocop/import")
-    return rendered[:end] + extra + rendered[end:]
+    # Legacy T2 routes still render through the single base page. Their links
+    # are intentionally not injected into the product navigation anymore.
+    return _base_page_core(title, body, session, active_path=active_path)
 
 
 def _t2_ocop_render(path, query, session, con, helpers):
@@ -814,7 +790,42 @@ def get_units(con):
     return [r["name"] for r in admin_units.units(con, active_only=True, communes_only=True)]
 
 
+def landing_page(session):
+    """Small home page exposing only the two operational modules."""
+    con = db_conn()
+    try:
+        salt_batches = con.execute("SELECT COUNT(*) FROM salt_import_batches").fetchone()[0]
+        salt_rows = con.execute("SELECT COUNT(*) FROM salt_weekly_records").fetchone()[0]
+        ocop_entities = con.execute("SELECT COUNT(*) FROM ocop_entities WHERE archived_at IS NULL").fetchone()[0]
+        ocop_products = con.execute("SELECT COUNT(*) FROM ocop_products WHERE status='active'").fetchone()[0]
+    finally:
+        con.close()
+    salt_import_action = '<a class="btn primary" href="/import-excel">Import báo cáo</a>' if is_chi_cuc_user(session) else ''
+    ocop_import_action = '<a class="btn primary" href="/ocop/import">Import dữ liệu</a>' if is_chi_cuc_user(session) else ''
+    body = f"""
+    <div class="container">
+      {take_flash(session)}
+      <div class="page-head"><div><h1>Trang chủ</h1><div class="subtitle">Quản lý dữ liệu Diêm nghiệp và OCOP.</div></div></div>
+      <div class="module-grid">
+        <section class="module-card">
+          <div class="module-card-heading"><div><span class="eyebrow">PHÂN HỆ 01</span><h2>DIÊM NGHIỆP</h2></div>{icon('area')}</div>
+          <p>Nhập báo cáo tuần, tra cứu theo xã/phường và xuất đúng tập dữ liệu đang lọc.</p>
+          <div class="module-stats"><span><strong>{salt_batches}</strong> sheet đã nhập</span><span><strong>{salt_rows}</strong> dòng dữ liệu</span></div>
+          <div class="actions">{salt_import_action}<a class="btn" href="/records">Tra cứu / Xuất báo cáo</a></div>
+        </section>
+        <section class="module-card">
+          <div class="module-card-heading"><div><span class="eyebrow">PHÂN HỆ 02</span><h2>OCOP</h2></div>{icon('table')}</div>
+          <p>Tra cứu sản phẩm theo địa bàn, chủ thể, nhóm sản phẩm và hạng sao.</p>
+          <div class="module-stats"><span><strong>{ocop_entities}</strong> chủ thể</span><span><strong>{ocop_products}</strong> sản phẩm</span></div>
+          <div class="actions">{ocop_import_action}<a class="btn" href="/ocop">Tra cứu / Xuất báo cáo</a></div>
+        </section>
+      </div>
+    </div>"""
+    return base_page("Trang chủ", body, session)
+
+
 def dashboard_page(session, query=""):
+    """Legacy salt dashboard kept for compatibility; not linked from UI."""
     """Dashboard for effective weekly records, compared with a distinct earlier week."""
     official = canonical_admin_unit(session["unit_name"]) if session["role"] == ROLE_UNIT else None
     params = parse_qs(query)
@@ -1058,6 +1069,7 @@ def record_action_buttons(session, r):
 
 
 def records_page(session, query):
+    """Legacy approval-list screen kept internal while weekly lookup is public."""
     filters = filters_from_query(query, session)
     con = db_conn()
     records = fetch_records(con, session, filters)
@@ -1101,6 +1113,7 @@ def records_page(session, query):
 
 
 def standard_data_page(session):
+    """Technical QD 5277 view; intentionally excluded from end-user navigation."""
     if not is_chi_cuc_user(session):
         return None
 
@@ -2211,6 +2224,7 @@ def weekly_records_page(session, query):
            ORDER BY b.report_date DESC,b.id DESC"""
     ).fetchall()
     requested_batch = params.get("batch", [""])[0].strip()
+    requested_unit = params.get("unit", [""])[0].strip()
     selected = next((batch for batch in batches if str(batch["id"]) == requested_batch), None)
     if not selected:
         requested_week = params.get("week", [""])[0].strip()
@@ -2228,6 +2242,9 @@ def weekly_records_page(session, query):
             official = canonical_admin_unit(session["unit_name"])
             sql += " AND ma_don_vi_hanh_chinh=?"
             args.append(official[1] if official else "")
+        elif requested_unit:
+            sql += " AND ma_don_vi_hanh_chinh=?"
+            args.append(requested_unit)
         sql += " ORDER BY excel_row"
         rows = con.execute(sql, args).fetchall()
     con.close()
@@ -2236,6 +2253,20 @@ def weekly_records_page(session, query):
         f'<option value="{batch["id"]}" {"selected" if selected and batch["id"] == selected["id"] else ""}>'
         f'{esc(batch["sheet_name"])} · {esc(batch["week_code"])} · {esc(batch["filename"])}</option>'
         for batch in batches
+    )
+    # Unit options are resolved separately so a selected sheet can be filtered
+    # without exposing technical IDs in the rendered table.
+    unit_con = db_conn()
+    try:
+        unit_rows = admin_units.units(unit_con, active_only=True, communes_only=True)
+    finally:
+        unit_con.close()
+    if session["role"] == ROLE_UNIT:
+        official = canonical_admin_unit(session["unit_name"])
+        unit_rows = [u for u in unit_rows if official and u["code"] == official[1]]
+    unit_options = '<option value="">Tất cả xã/phường</option>' + ''.join(
+        f'<option value="{esc(unit["code"])}" {"selected" if unit["code"] == requested_unit else ""}>{esc(unit["name"])}</option>'
+        for unit in unit_rows
     )
     if not selected:
         report = '<section class="card empty">Chưa có sheet báo cáo tuần nào được import.</section>'
@@ -2260,6 +2291,7 @@ def weekly_records_page(session, query):
             report_date = date.fromisoformat(str(report_date)).strftime("%d/%m/%Y")
         except ValueError:
             report_date = str(report_date)
+        export_query = urlencode({k: v for k, v in {"batch": str(selected["id"]), "unit": requested_unit}.items() if v})
         report = f"""
         <section class="sheet-report">
           <div class="sheet-meta">
@@ -2276,6 +2308,7 @@ def weekly_records_page(session, query):
             </thead>
             <tbody><tr class="sheet-total">{''.join(total_cells)}</tr>{''.join(detail_rows)}</tbody>
           </table></div>
+          <div class="actions" style="margin-top:12px"><a class="btn ok" href="/records/export.xlsx?{export_query}">Xuất Excel dữ liệu đang xem</a></div>
           <p class="sheet-footnote">Nguồn: {esc(selected['filename'])} · Import bởi {esc(selected['username'])} lúc {esc(selected['imported_at'])}. Mỗi sheet là một báo cáo; mỗi xã/phường là một dòng trong báo cáo.</p>
         </section>"""
 
@@ -2284,11 +2317,85 @@ def weekly_records_page(session, query):
       {take_flash(session)}
       <div class="page-head"><div><h1>Tra cứu sheet báo cáo tuần</h1><div class="subtitle">Chọn một sheet đã import để đọc lại toàn bộ bảng theo bố cục Excel.</div></div>
         {'<a class="btn primary" href="/import-excel">Import Excel</a>' if is_chi_cuc_user(session) else ''}</div>
-      {salt_data_tabs(session, "/salt/weekly")}
-      <form class="card weekly-filter" method="get"><div class="field sheet-picker"><label>Sheet đã import</label><select name="batch">{options}</select></div><button class="btn primary">Mở bảng</button><div class="weekly-progress"><strong>{len(batches)}</strong><span>sheet báo cáo</span></div></form>
+      {salt_data_tabs(session, "/records")}
+      <form class="card weekly-filter" method="get"><div class="field sheet-picker"><label>Sheet đã import</label><select name="batch">{options}</select></div><div class="field"><label>Xã/phường</label><select name="unit">{unit_options}</select></div><button class="btn primary">Mở bảng</button><div class="weekly-progress"><strong>{len(batches)}</strong><span>sheet báo cáo</span></div></form>
       {report}
     </div>"""
-    return base_page("Tra cứu báo cáo tuần", body, session, active_path="/salt/weekly")
+    return base_page("Tra cứu báo cáo tuần", body, session, active_path="/records")
+
+
+def export_weekly_xlsx(session, query=""):
+    """Export raw rows of the selected imported sheet and current unit filter."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
+        from openpyxl.utils import get_column_letter
+    except Exception:
+        return None, None
+    params = parse_qs(query or "")
+    batch_id = params.get("batch", [""])[0].strip()
+    requested_unit = params.get("unit", [""])[0].strip()
+    try:
+        batch_id = int(batch_id)
+    except (TypeError, ValueError):
+        return None, None
+    con = db_conn()
+    try:
+        batch = con.execute("SELECT * FROM salt_import_batches WHERE id=?", (batch_id,)).fetchone()
+        if not batch:
+            return None, None
+        sql = "SELECT raw_data_json FROM salt_weekly_import_rows WHERE batch_id=?"
+        args = [batch_id]
+        if session["role"] == ROLE_UNIT:
+            official = canonical_admin_unit(session["unit_name"])
+            sql += " AND ma_don_vi_hanh_chinh=?"
+            args.append(official[1] if official else "")
+        elif requested_unit:
+            sql += " AND ma_don_vi_hanh_chinh=?"
+            args.append(requested_unit)
+        sql += " ORDER BY excel_row"
+        raw_rows = [json.loads(row["raw_data_json"]) for row in con.execute(sql, args).fetchall()]
+    finally:
+        con.close()
+    headers = ["TT", "Xã/phường", "Diện tích cộng (ha)", "Muối đất (ha)", "Muối trải bạt (ha)",
+               "Sản lượng cộng (tấn)", "Muối đất (tấn)", "Muối trải bạt (tấn)", "Tiêu thụ cộng (tấn)",
+               "Tiêu thụ muối đất (tấn)", "Tiêu thụ trải bạt (tấn)", "Còn lại cộng (tấn)",
+               "Còn lại muối đất (tấn)", "Còn lại trải bạt (tấn)", "Chế biến cộng (tấn)",
+               "Muối tinh (tấn)", "Muối I-ốt (tấn)", "Số hộ", "Lao động", "Giá muối đất",
+               "Giá trải bạt", "Năng suất BQ", "Thiệt hại cộng", "Thiệt hại muối đất",
+               "Thiệt hại trải bạt", "Diện tích mất trắng", "Ghi chú", "Kết thúc niên vụ"]
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Bao cao tuan"
+    ws.append([f"BÁO CÁO TUẦN — {batch['sheet_name']}"])
+    ws.append([f"Nguồn: {batch['filename']} · Ngày chốt: {batch['report_date']} · Thời điểm xuất: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"])
+    ws.append([f"Điều kiện lọc: Xã/phường = {requested_unit or 'Tất cả trong phạm vi được phép'}"])
+    ws.append(headers)
+    for index, raw in enumerate(raw_rows, 1):
+        values = [raw.get(str(column), {}).get("value", "") for column in range(1, 29)]
+        values[0] = index
+        ws.append(values)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(headers))
+    ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=len(headers))
+    thin = Side(style="thin", color="B8C2CC")
+    ws[1][0].font = Font(bold=True, size=14, color="203149")
+    for cell in ws[4]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="BE3A24")
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    for row in ws.iter_rows(min_row=5, max_row=ws.max_row, min_col=1, max_col=len(headers)):
+        for cell in row:
+            cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+    for index in range(1, len(headers) + 1):
+        ws.column_dimensions[get_column_letter(index)].width = 18 if index != 2 else 24
+    ws.freeze_panes = "C5"
+    ws.auto_filter.ref = f"A4:AB{max(ws.max_row, 4)}"
+    bio = io.BytesIO()
+    wb.save(bio)
+    return bio.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def change_password_page(session, error=""):
@@ -2385,6 +2492,69 @@ def export_xlsx(session, filters):
     for row in ws.iter_rows(min_row=3):
         for cell in row: cell.border=Border(left=thin,right=thin,top=thin,bottom=thin)
     bio=io.BytesIO(); wb.save(bio); return bio.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+
+def export_ocop_xlsx(session, query=""):
+    """Export the filtered OCOP catalogue without technical identifiers."""
+    try:
+        from openpyxl import Workbook
+        from openpyxl.styles import Alignment, Font, PatternFill, Border, Side
+        from openpyxl.utils import get_column_letter
+    except Exception:
+        return None, None
+    params = parse_qs(query or "")
+    filters = {key: params.get(key, [""])[0].strip() for key in ("q", "unit", "group", "star")}
+    con = db_conn()
+    try:
+        import ocop_services
+        records = ocop_services.export_products(con, session, filters)
+    finally:
+        con.close()
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "OCOP"
+    headers = ["Xã/phường", "Chủ thể", "Loại hình chủ thể", "Người đại diện", "Điện thoại",
+               "Tên sản phẩm", "Nhóm sản phẩm", "Hạng sao hiện tại", "Ngày công nhận gần nhất",
+               "Số quyết định", "Cơ quan ban hành", "Ngày hết hạn"]
+    ws.append(["DANH MỤC SẢN PHẨM OCOP"])
+    ws.append([f"Thời điểm xuất: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}"])
+    filter_labels = {"q": "Từ khóa", "unit": "Xã/phường", "group": "Nhóm sản phẩm", "star": "Hạng sao"}
+    criteria = "; ".join(f"{filter_labels[k]}: {filters[k]}" for k in filters if filters[k]) or "Không lọc"
+    ws.append([f"Điều kiện lọc: {criteria}"])
+    ws.append(headers)
+    for row in records:
+        rank = row.get("recognition_star") or row.get("current_star")
+        ws.append([
+            row.get("unit_name") or "", row.get("entity_name") or "", row.get("facility_type") or "",
+            row.get("representative_name") or "", row.get("phone") or "", row.get("name") or "",
+            row.get("product_group") or "", f"{rank} sao" if rank else "", row.get("latest_recognition_date") or "",
+            row.get("latest_decision_number") or "", row.get("latest_decision_authority") or "",
+            row.get("latest_expiry_date") or "",
+        ])
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+    ws.merge_cells(start_row=2, start_column=1, end_row=2, end_column=len(headers))
+    ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=len(headers))
+    thin = Side(style="thin", color="B8C2CC")
+    for cell in ws[1] + ws[2] + ws[3]:
+        cell.alignment = Alignment(horizontal="left", vertical="center")
+    ws[1][0].font = Font(bold=True, size=14, color="203149")
+    for cell in ws[4]:
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill("solid", fgColor="BE3A24")
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    for row in ws.iter_rows(min_row=5, max_row=ws.max_row, min_col=1, max_col=len(headers)):
+        for cell in row:
+            cell.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
+    widths = [18, 28, 18, 22, 16, 28, 20, 15, 20, 18, 25, 18]
+    for index, width in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(index)].width = width
+    ws.freeze_panes = "A5"
+    ws.auto_filter.ref = f"A4:L{max(ws.max_row, 4)}"
+    bio = io.BytesIO()
+    wb.save(bio)
+    return bio.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def ocop_access_page(con, session):
@@ -2764,6 +2934,19 @@ class Handler(BaseHTTPRequestHandler):
         if not session:
             return
 
+        if path == "/ocop/export.xlsx":
+            content, mime = export_ocop_xlsx(session, parsed.query)
+            if content is None:
+                self.send_html(base_page("Lỗi", '<div class="container"><div class="notice err">Máy chủ chưa có openpyxl.</div></div>', session), 500)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Disposition", 'attachment; filename="tra_cuu_ocop.xlsx"')
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+            return
+
         if self.handle_ocop_t2_get(path, parsed.query, session):
             return
 
@@ -2779,26 +2962,30 @@ class Handler(BaseHTTPRequestHandler):
         if self.handle_ocop(path, parsed.query, session):
             return
         if path == "/dashboard":
-
-            self.send_html(
-                dashboard_page(session, parsed.query)
-            )
-
+            self.send_html(landing_page(session))
             return
 
 
         # =========================
         # DANH SÁCH BÁO CÁO
         # =========================
+        if path in ("/records/export.xlsx", "/salt/weekly/export.xlsx"):
+            content, mime = export_weekly_xlsx(session, parsed.query)
+            if content is None:
+                self.send_html(base_page("Lỗi", '<div class="container"><div class="notice err">Không tìm thấy sheet hoặc máy chủ chưa có openpyxl.</div></div>', session), 404)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Disposition", 'attachment; filename="bao_cao_muoi_tuan.xlsx"')
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+            return
+
         if path == "/records":
-
-            self.send_html(
-                records_page(
-                    session,
-                    parsed.query
-                )
-            )
-
+            # The public salt screen is the weekly sheet lookup. The old
+            # approval list remains available only through internal links.
+            self.send_html(weekly_records_page(session, parsed.query))
             return
 
         if path == "/standard-data":

@@ -2,6 +2,21 @@
 
 Tài liệu này ghi lại các thay đổi đáng chú ý của hệ thống Quản lý muối – OCOP.
 
+## 2026-09-14 — Tinh giản giao diện import, tra cứu và xuất báo cáo
+
+- Rút trang chủ và sidebar còn hai phân hệ nghiệp vụ: Diêm nghiệp và OCOP.
+- Diêm nghiệp: `/records` tra cứu sheet tuần theo xã/phường, render lại bảng Excel
+  và xuất đúng sheet/bộ lọc; `/import-excel` giữ nguyên preview, validation, staging,
+  idempotency và skip/update.
+- OCOP: `/ocop` trở thành catalogue tra cứu sản phẩm theo xã/phường, từ khóa, nhóm
+  sản phẩm và hạng sao; bổ sung các trường chủ thể/công nhận cần đọc và
+  `/ocop/export.xlsx` xuất đúng bộ lọc, không có ID kỹ thuật.
+- Giữ 404 chủ thể, 1.024 sản phẩm và 1.069 lịch sử công nhận trong production;
+  không chạy migration, không DROP/xóa dữ liệu và không đổi cấu trúc QĐ 5277/5333.
+- Các màn hình hồ sơ đánh giá, reviewer workflow, bộ tiêu chí và dữ liệu chuẩn vẫn
+  tồn tại ở backend dưới dạng internal/deprecated để tương thích, nhưng đã bỏ khỏi menu.
+- Cập nhật README với luồng sử dụng mới; thêm CSS cho trang chủ hai phân hệ.
+
 ## 2026-09-14 — Triển khai PostgreSQL production
 
 - Khởi tạo database production `ocop_db` trên PostgreSQL 17.6 từ
