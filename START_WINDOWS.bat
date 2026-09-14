@@ -1,6 +1,7 @@
 @echo off
 chcp 65001 > nul
 setlocal
+echo [0/5] START_WINDOWS.bat dang chay tu %~dp0
 rem Cach dung:
 rem   START_WINDOWS.bat       = dung server cu roi khoi dong server moi
 rem   START_WINDOWS.bat stop  = chi dung server, khong khoi dong lai
@@ -32,6 +33,7 @@ if exist "%APP_DIR%database\.env.production" (
 )
 
 cd /d "%APP_DIR%"
+echo [INFO] Moi truong: %DB_ENV_LABEL% ^| Env file: %PTNT_DB_ENV_FILE%
 rem Web server mặc định chạy ở cổng 8080. Có thể ghi đè bằng SALT_WEB_PORT trong file .env.
 set "WEB_PORT=8080"
 for /f "usebackq tokens=1,* delims==" %%A in ("%PTNT_DB_ENV_FILE%") do (
@@ -43,7 +45,8 @@ set "STOP_FAILED="
 for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":%WEB_PORT% .*LISTENING"') do (
   if not "%%P"=="0" (
     echo Dang dung tien trinh web PID %%P...
-    taskkill /PID %%P /T /F >nul 2>&1
+    rem Chi dung PID dang giu cong web; khong dung ca cay tien trinh cua cua so CMD.
+    taskkill /PID %%P /F >nul 2>&1
     if errorlevel 1 (
       echo Khong the dung PID %%P. Tien trinh co the dang chay bang quyen Administrator.
       set "STOP_FAILED=1"
@@ -56,7 +59,7 @@ if defined STOP_FAILED (
   pause
   exit /b 1
 )
-timeout /t 1 /nobreak >nul
+rem taskkill chay dong bo; khong can timeout (timeout loi khi CMD khong co console).
 if "%STOP_ONLY%"=="1" (
   echo Da dung server web. Khong khoi dong lai.
   exit /b 0
