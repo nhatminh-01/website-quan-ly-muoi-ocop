@@ -54,6 +54,19 @@
     });
   });
   syncMenu();
+
+  // Keep the two-module home overview visually centered as one balanced block.
+  const moduleGrid = document.querySelector('.module-grid');
+  if (moduleGrid) {
+    moduleGrid.style.marginInline = 'auto';
+    const pageHead = moduleGrid.previousElementSibling;
+    if (pageHead?.classList.contains('page-head')) {
+      pageHead.style.maxWidth = '1180px';
+      pageHead.style.marginLeft = 'auto';
+      pageHead.style.marginRight = 'auto';
+    }
+  }
+
   const clock = document.getElementById('clock-time');
   const calendar = document.getElementById('clock-date');
   if (clock && calendar) {
