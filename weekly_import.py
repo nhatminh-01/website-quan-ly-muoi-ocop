@@ -67,11 +67,6 @@ def _number(value, label):
     return number.quantize(Decimal(".01"))
 
 
-def _is_missing_number(value):
-    """Treat empty cells and the workbook's dash marker as unentered values."""
-    return value is None or (isinstance(value, str) and value.strip() in ("", "-"))
-
-
 def _week_code(report_date):
     day = date.fromisoformat(str(report_date))
     iso_year, iso_week, _ = day.isocalendar()
@@ -270,9 +265,7 @@ def parse_weekly_workbook(file_bytes, report_date=None, sheet_name="", filename=
                     errors.append(f"Đơn vị xuất hiện nhiều lần trong cùng sheet: {unit_name}.")
                 seen_units.add(unit_code)
             values = {}
-            supplied = {}
             for name, column in NUMERIC_COLUMNS.items():
-                supplied[name] = not _is_missing_number(values_row[column - 1])
                 try:
                     values[name] = float(_number(values_row[column - 1], f"{name} (cột {column})"))
                 except WeeklyImportError as exc:
@@ -286,16 +279,10 @@ def parse_weekly_workbook(file_bytes, report_date=None, sheet_name="", filename=
                 ("processed_total", "processed_fine", "processed_iodized", "Sản lượng chế biến"),
                 ("damage_total", "damage_land", "damage_tarp", "Thiệt hại"),
             ):
-                detail_total = values[left] + values[right]
-                if not supplied[total]:
-                    # A blank total is an omitted input, not a contradiction.
-                    # Derive it from entered detail values so the import does
-                    # not silently lose a reported quantity.
-                    values[total] = detail_total
-                    continue
-                difference = values[total] - detail_total
-                if abs(difference) > 0.01:
-                    warnings.append(f"{label}: tổng lệch chi tiết {difference:+.2f}.")
+                # Total columns are derived fields. Recalculate them from the
+                # detail columns so blank, stale, or manually mistyped totals
+                # cannot overwrite the source breakdown.
+                values[total] = values[left] + values[right]
             canonical = {
                 "week_code": week_code, "report_date": day.isoformat(),
                 "unit_name": unit_name, "ma_don_vi_hanh_chinh": unit_code,
