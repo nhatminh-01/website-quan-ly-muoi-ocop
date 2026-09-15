@@ -680,7 +680,7 @@ def base_page(title, body, session=None, active_path=None):
         <button type="button" id="sidebar-backdrop" class="sidebar-backdrop" aria-label="Đóng menu" tabindex="-1"></button>
         """
         body = f'<main class="app-main" id="main-content">{body}</main>'
-    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260914-ui-refinement"><script src="/assets/app.js?v=20260914-ui-refinement" defer></script></head><body>{top}{body}</body></html>"""
+    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260915-weekly-summary-modal"><script src="/assets/app.js?v=20260915-weekly-summary-modal" defer></script></head><body>{top}{body}</body></html>"""
 
 
 # OCOP T2 is part of this single server entry point.  Keep the original page
@@ -2238,6 +2238,146 @@ def _weekly_excel_value(value):
         return token
 
 
+_WEEKLY_LAND_COLUMNS = (4, 7, 10, 13, 24)
+_WEEKLY_TARP_COLUMNS = (5, 8, 11, 14, 25)
+
+
+def _weekly_raw_value(raw, column):
+    return raw.get(str(column), {}).get("value")
+
+
+def _weekly_numeric_value(raw, column):
+    value = _weekly_raw_value(raw, column)
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return 0.0
+
+
+def _weekly_status_badge(label, kind="neutral"):
+    return f'<span class="weekly-status {esc(kind)}">{esc(label)}</span>'
+
+
+def _weekly_type_status(raw, detail_columns, price_column):
+    """Return the current-period production state only.
+
+    Price is intentionally not used to infer whether a foundation was in
+    production during the selected reporting period.
+    """
+    has_activity = any(_weekly_numeric_value(raw, column) > 0 for column in detail_columns)
+    if has_activity:
+        return "active", "Có dữ liệu"
+    return "inactive", "Không phát sinh kỳ này"
+
+
+def _weekly_price_state(raw, price_column, detail_columns):
+    value = _weekly_raw_value(raw, price_column)
+    type_kind, _ = _weekly_type_status(raw, detail_columns, price_column)
+    if value not in (None, "", "-") and type_kind == "inactive":
+        return "reference", "Giá tham chiếu"
+    if value in (None, "", "-") and type_kind == "active":
+        return "pending", "Chưa nhập"
+    if value not in (None, "", "-"):
+        return "active", "Có giá"
+    return "inactive", "Không phát sinh"
+
+
+def _weekly_type_badge(raw, label, detail_columns, price_column):
+    kind, state = _weekly_type_status(raw, detail_columns, price_column)
+    price_kind, _ = _weekly_price_state(raw, price_column, detail_columns)
+    badge_kind = "review" if price_kind == "reference" else kind
+    return (
+        f'<span class="weekly-type-badge {badge_kind}">'
+        f'<strong>{esc(label)}</strong><small>{esc(state)}</small></span>'
+    )
+
+
+def _weekly_price_display(raw, price_column, detail_columns):
+    value = _weekly_raw_value(raw, price_column)
+    if value not in (None, "", "-"):
+        price_kind, price_label = _weekly_price_state(raw, price_column, detail_columns)
+        extra = f' title="{esc(price_label)}: giá được giữ độc lập với số liệu sản xuất kỳ này"' if price_kind == "reference" else ""
+        return f'<span class="weekly-price-value"{extra}>{esc(_weekly_excel_value(value))}</span>'
+    type_kind, _ = _weekly_type_status(raw, detail_columns, price_column)
+    if type_kind == "active":
+        return _weekly_status_badge("Chưa nhập", "pending")
+    return _weekly_status_badge("Không phát sinh", "inactive")
+
+
+def _weekly_metric_display(raw, column, active):
+    value = _weekly_raw_value(raw, column)
+    if value in (None, "", "-"):
+        return _weekly_status_badge("Chưa nhập", "pending") if active else _weekly_status_badge("—", "inactive")
+    return esc(_weekly_excel_value(value))
+
+
+def _weekly_type_detail(raw, label, detail_columns, price_column):
+    kind, state = _weekly_type_status(raw, detail_columns, price_column)
+    price_kind, _ = _weekly_price_state(raw, price_column, detail_columns)
+    card_kind = "review" if price_kind == "reference" else kind
+    if kind == "inactive":
+        return (
+            f'<div class="weekly-breakdown-card {card_kind}">'
+            f'<div class="weekly-breakdown-heading"><strong>{esc(label)}</strong>'
+            f'{_weekly_status_badge(state, card_kind)}</div>'
+            f'<div class="weekly-breakdown-empty"><span>Diện tích, sản lượng, tiêu thụ và còn lại</span>'
+            f'{_weekly_status_badge("—", "inactive")}</div>'
+            f'<div class="weekly-breakdown-price-note">Giá: {_weekly_price_display(raw, price_column, detail_columns)}</div>'
+            '</div>'
+        )
+    labels = (("Diện tích", detail_columns[0]), ("Thu hoạch", detail_columns[1]),
+              ("Đã tiêu thụ", detail_columns[2]), ("Còn lại", detail_columns[3]))
+    metrics = "".join(
+        f'<div><span>{esc(metric_label)}</span><strong>{_weekly_metric_display(raw, column, kind in ("active", "review"))}</strong></div>'
+        for metric_label, column in labels
+    )
+    return (
+        f'<div class="weekly-breakdown-card {kind}">'
+        f'<div class="weekly-breakdown-heading"><strong>{esc(label)}</strong>'
+        f'{_weekly_status_badge(state, "ok")}</div>'
+        f'<div class="weekly-breakdown-metrics">{metrics}'
+        f'<div><span>Giá</span><strong>{_weekly_price_display(raw, price_column, detail_columns)}</strong></div>'
+        '</div></div>'
+    )
+
+
+def _weekly_detail_dialog(raw, dialog_id):
+    unit_name = _weekly_raw_value(raw, 2) or "Xã/phường"
+    detail_cards = (
+        _weekly_type_detail(raw, "Muối đất", _WEEKLY_LAND_COLUMNS, 20)
+        + _weekly_type_detail(raw, "Muối trải bạt", _WEEKLY_TARP_COLUMNS, 21)
+    )
+    review_types = []
+    for label, detail_columns, price_column in (
+        ("muối đất", _WEEKLY_LAND_COLUMNS, 20),
+        ("muối trải bạt", _WEEKLY_TARP_COLUMNS, 21),
+    ):
+        kind, _ = _weekly_type_status(raw, detail_columns, price_column)
+        price_kind, _ = _weekly_price_state(raw, price_column, detail_columns)
+        if kind == "inactive" and price_kind == "reference":
+            review_types.append(label)
+    review_note = ""
+    if review_types:
+        review_note = (
+            '<div class="weekly-dialog-warning">'
+            '<strong>Giá được giữ độc lập</strong>'
+            f'<p>Đã nhập giá {esc(" và ".join(review_types))}, nhưng kỳ này không có số liệu sản xuất tương ứng. '
+            'Các ô chỉ tiêu được để “—”; giá vẫn được giữ lại để tham khảo và không dùng để suy ra phương pháp sản xuất.</p>'
+            '</div>'
+        )
+    return (
+        f'<dialog id="{esc(dialog_id)}" class="weekly-dialog">'
+        '<div class="weekly-dialog-content">'
+        '<div class="weekly-dialog-header">'
+        f'<div><span class="weekly-dialog-eyebrow">Chi tiết loại hình</span><h3>{esc(unit_name)}</h3></div>'
+        '<button type="button" class="weekly-dialog-close" data-weekly-dialog-close aria-label="Đóng">×</button>'
+        '</div>'
+        f'{review_note}<div class="weekly-breakdown">{detail_cards}</div>'
+        '<div class="weekly-dialog-footer"><span>Ô trống được diễn giải theo trạng thái, không hiển thị nguyên dấu “-” của Excel.</span>'
+        '<button type="button" class="btn" data-weekly-dialog-close>Đóng</button></div>'
+        '</div></dialog>'
+    )
+
+
 def _weekly_total(raw_rows, column):
     values = []
     for raw in raw_rows:
@@ -2340,31 +2480,58 @@ def weekly_records_page(session, query):
     else:
         raw_rows = [json.loads(row["raw_data_json"]) for row in rows]
         def raw_value(raw, column):
-            return esc(_weekly_excel_value(raw.get(str(column), {}).get("value")))
+            value = _weekly_raw_value(raw, column)
+            if value in (None, "", "-"):
+                return _weekly_status_badge("Chưa nhập", "pending")
+            return esc(_weekly_excel_value(value))
 
-        summary_rows = "".join(
-            f'<tr><td>{raw_value(raw, 2)}</td><td>{raw_value(raw, 3)}</td>'
-            f'<td>{raw_value(raw, 6)}</td><td>{raw_value(raw, 9)}</td>'
-            f'<td>{raw_value(raw, 12)}</td><td>{raw_value(raw, 18)}</td>'
-            f'<td>{raw_value(raw, 19)}</td><td>{raw_value(raw, 20)}</td>'
-            f'<td>{raw_value(raw, 21)}</td></tr>'
-            for raw in raw_rows
-        ) or '<tr><td colspan="9" class="empty">Không có xã/phường phù hợp.</td></tr>'
+        summary_row_parts = []
+        dialog_parts = []
+        for row_index, raw in enumerate(raw_rows):
+            dialog_id = f"weekly-detail-dialog-{row_index}"
+            summary_row_parts.append(
+                f'<tr><td><strong>{raw_value(raw, 2)}</strong></td>'
+                f'<td><div class="weekly-type-cell">'
+                f'{_weekly_type_badge(raw, "Muối đất", _WEEKLY_LAND_COLUMNS, 20)}'
+                f'{_weekly_type_badge(raw, "Trải bạt", _WEEKLY_TARP_COLUMNS, 21)}'
+                '</div></td>'
+                f'<td>{raw_value(raw, 3)}</td>'
+                f'<td>{raw_value(raw, 6)}</td><td>{raw_value(raw, 9)}</td>'
+                f'<td>{raw_value(raw, 12)}</td><td>{raw_value(raw, 18)}</td>'
+                f'<td>{raw_value(raw, 19)}</td>'
+                f'<td>{_weekly_price_display(raw, 20, _WEEKLY_LAND_COLUMNS)}</td>'
+                f'<td>{_weekly_price_display(raw, 21, _WEEKLY_TARP_COLUMNS)}</td>'
+                f'<td><button type="button" class="weekly-detail-trigger" '
+                f'data-weekly-dialog="{esc(dialog_id)}">Chi tiết</button></td></tr>'
+            )
+            dialog_parts.append(_weekly_detail_dialog(raw, dialog_id))
+        summary_rows = "".join(summary_row_parts) or '<tr><td colspan="11" class="empty">Không có xã/phường phù hợp.</td></tr>'
+        detail_dialogs = "".join(dialog_parts)
         summary_total = (
             '<tr class="sheet-total"><th>TỔNG CỘNG</th>'
+            '<th><span class="weekly-total-label">Toàn bộ loại hình</span></th>'
             f'<th>{esc(_weekly_excel_value(_weekly_total(raw_rows, 3)))}</th>'
             f'<th>{esc(_weekly_excel_value(_weekly_total(raw_rows, 6)))}</th>'
             f'<th>{esc(_weekly_excel_value(_weekly_total(raw_rows, 9)))}</th>'
             f'<th>{esc(_weekly_excel_value(_weekly_total(raw_rows, 12)))}</th>'
             f'<th>{esc(_weekly_excel_value(_weekly_total(raw_rows, 18)))}</th>'
             f'<th>{esc(_weekly_excel_value(_weekly_total(raw_rows, 19)))}</th>'
-            '<th>—</th><th>—</th></tr>'
+            f'<th>{_weekly_status_badge("Không tổng hợp", "neutral")}</th>'
+            f'<th>{_weekly_status_badge("Không tổng hợp", "neutral")}</th>'
+            '<th>—</th></tr>'
         )
         summary_table = f'''
           <div class="table-wrap"><table class="summary-table weekly-summary-table">
-            <thead><tr><th>Xã/phường</th><th>Diện tích tổng (ha)</th><th>Sản lượng thu hoạch (tấn)</th><th>Đã tiêu thụ (tấn)</th><th>Còn lại (tấn)</th><th>Số hộ</th><th>Lao động</th><th>Giá muối đất</th><th>Giá muối trải bạt</th></tr></thead>
+            <thead><tr><th>Xã/phường</th><th>Loại hình</th><th>Diện tích tổng (ha)</th><th>Sản lượng thu hoạch (tấn)</th><th>Đã tiêu thụ (tấn)</th><th>Còn lại (tấn)</th><th>Số hộ</th><th>Lao động</th><th>Giá muối đất</th><th>Giá muối trải bạt</th><th>Chi tiết</th></tr></thead>
             <tbody>{summary_total}{summary_rows}</tbody>
-          </table></div>'''
+          </table></div>{detail_dialogs}
+          <div class="weekly-summary-legend" aria-label="Quy ước hiển thị">
+            <span><i class="legend-dot active"></i>Có dữ liệu</span>
+            <span><i class="legend-dot pending"></i>Chưa nhập</span>
+            <span><i class="legend-dot inactive"></i>Không phát sinh</span>
+            <span><i class="legend-dot reference"></i>Giá tham chiếu</span>
+            <span>Giá không cộng dồn ở dòng tổng; xem theo từng xã/phường.</span>
+          </div>'''
         detail_rows = []
         for raw in raw_rows:
             cells = ''.join(f'<td>{esc(_weekly_excel_value(raw.get(str(column), {}).get("value")))}</td>' for column in range(1, 29))

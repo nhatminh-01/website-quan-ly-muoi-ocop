@@ -55,6 +55,35 @@
   });
   syncMenu();
 
+  // Weekly summary details stay in a modal so the table width does not change.
+  const weeklyDialogTriggers = document.querySelectorAll('[data-weekly-dialog]');
+  weeklyDialogTriggers.forEach(trigger => {
+    const dialog = document.getElementById(trigger.dataset.weeklyDialog);
+    if (!dialog) return;
+    trigger.addEventListener('click', () => {
+      dialog._weeklyLastTrigger = trigger;
+      if (typeof dialog.showModal === 'function') dialog.showModal();
+      else dialog.setAttribute('open', '');
+    });
+  });
+  document.querySelectorAll('[data-weekly-dialog-close]').forEach(closeButton => {
+    closeButton.addEventListener('click', () => {
+      const dialog = closeButton.closest('.weekly-dialog');
+      if (!dialog) return;
+      if (typeof dialog.close === 'function') dialog.close();
+      else dialog.removeAttribute('open');
+      dialog._weeklyLastTrigger?.focus();
+    });
+  });
+  document.querySelectorAll('.weekly-dialog').forEach(dialog => {
+    dialog.addEventListener('click', event => {
+      if (event.target !== dialog) return;
+      if (typeof dialog.close === 'function') dialog.close();
+      else dialog.removeAttribute('open');
+      dialog._weeklyLastTrigger?.focus();
+    });
+  });
+
   // Keep the two-module home overview visually centered as one balanced block.
   const moduleGrid = document.querySelector('.module-grid');
   if (moduleGrid) {
