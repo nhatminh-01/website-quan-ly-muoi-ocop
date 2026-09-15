@@ -101,7 +101,7 @@ class WeeklyImportUiRefinementTests(unittest.TestCase):
         self.assertEqual(row["canonical"]["sold_total"], 1000.0)
         self.assertEqual(row["canonical"]["remaining_total"], 8750.0)
 
-    def test_entered_total_mismatch_still_warns(self):
+    def test_entered_total_mismatch_is_recalculated(self):
         values = [1, "Xã A", 100, 0, 100, 9000, 0, 9750] + [0] * 20
         content = workbook_bytes("13.3-Tuan 12", row_values=values)
 
@@ -113,8 +113,8 @@ class WeeklyImportUiRefinementTests(unittest.TestCase):
             lambda name: ("Xã A", "001") if name == "Xã A" else None,
         )
 
-        self.assertEqual(preview["warning_rows"], 1)
-        self.assertIn("Sản lượng thu hoạch", preview["rows"][0]["warnings"][0])
+        self.assertEqual(preview["warning_rows"], 0)
+        self.assertEqual(preview["rows"][0]["canonical"]["san_luong"], 9750.0)
 
 
 if __name__ == "__main__":
