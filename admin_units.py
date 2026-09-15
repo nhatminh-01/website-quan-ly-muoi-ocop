@@ -139,12 +139,12 @@ def set_active(con, session, code, active):
 
 
 def account_unit(con, role, data):
-    if role != "unit":
-        return str(data.get("unit_name", "")).strip() or "Chi cục", None
-    row = get_unit(con,str(data.get("unit_code", "")).strip(), lock=True)
-    if not row or not row["active"] or row["level"] not in ("xa","phuong") or row["code"].upper().startswith("TMP"):
-        raise CatalogError("Chọn xã/phường đang hoạt động từ danh mục hành chính.")
-    return row["name"], row["code"]
+    """Provision only Chi cục accounts; old unit mappings remain for history."""
+    if role == "unit":
+        raise CatalogError(
+            "Hệ thống hiện chỉ cấp tài khoản nội bộ Chi cục; tài khoản xã/phường đã ngừng triển khai."
+        )
+    return str(data.get("unit_name", "")).strip() or "Chi cục", None
 
 
 def assign_account(con, actor_id, user_id, code):
