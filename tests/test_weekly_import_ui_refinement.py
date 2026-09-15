@@ -61,7 +61,7 @@ class WeeklyImportUiRefinementTests(unittest.TestCase):
         self.assertEqual(detected["report_date"], "2026-08-21")
         self.assertEqual(detected["source"], "sheet_name+filename")
 
-    def test_sheet_week_mismatch_blocks_preview(self):
+    def test_sheet_week_label_does_not_block_preview(self):
         values = [None, "Xã A"] + [0] * 26
         content = workbook_bytes("21.8-Tuan 34", row_values=values)
 
@@ -73,9 +73,48 @@ class WeeklyImportUiRefinementTests(unittest.TestCase):
             lambda name: ("Xã A", "001") if name == "Xã A" else None,
         )
 
-        self.assertTrue(preview["period_blocked"])
-        self.assertIn("Tuần 34", preview["period_warnings"][0])
+        self.assertFalse(preview["period_blocked"])
+        self.assertEqual(preview["period_warnings"], [])
         self.assertEqual(preview["week_code"], "2026-W35")
+
+    def test_missing_totals_are_derived_from_entered_details(self):
+        values = [
+            1, "Xã A", 100, 0, 100, None, 0, 9750,
+            None, None, 1000, None, "-", 8750,
+            None, None, None, 1, 1, None, None, 0,
+            None, None, None, None, None, None,
+        ]
+        content = workbook_bytes("13.3-Tuan 12", row_values=values)
+
+        preview = parse_weekly_workbook(
+            content,
+            "2026-03-13",
+            "13.3-Tuan 12",
+            "BaoCao.xlsx",
+            lambda name: ("Xã A", "001") if name == "Xã A" else None,
+        )
+
+        row = preview["rows"][0]
+        self.assertEqual(row["status"], "valid")
+        self.assertEqual(preview["warning_rows"], 0)
+        self.assertEqual(row["canonical"]["san_luong"], 9750.0)
+        self.assertEqual(row["canonical"]["sold_total"], 1000.0)
+        self.assertEqual(row["canonical"]["remaining_total"], 8750.0)
+
+    def test_entered_total_mismatch_still_warns(self):
+        values = [1, "Xã A", 100, 0, 100, 9000, 0, 9750] + [0] * 20
+        content = workbook_bytes("13.3-Tuan 12", row_values=values)
+
+        preview = parse_weekly_workbook(
+            content,
+            "2026-03-13",
+            "13.3-Tuan 12",
+            "BaoCao.xlsx",
+            lambda name: ("Xã A", "001") if name == "Xã A" else None,
+        )
+
+        self.assertEqual(preview["warning_rows"], 1)
+        self.assertIn("Sản lượng thu hoạch", preview["rows"][0]["warnings"][0])
 
 
 if __name__ == "__main__":
