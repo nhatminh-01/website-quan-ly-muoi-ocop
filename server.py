@@ -643,8 +643,10 @@ def base_page(title, body, session=None, active_path=None):
             system_items.append(("/admin-units", "location", "Danh mục đơn vị hành chính"))
         system_items.extend([("/change-password", "key", "Đổi mật khẩu"),
                              ("/logout", "logout", "Đăng xuất")])
-        nav_groups = [("TRANG CHỦ", [("/dashboard", "home", "Trang chủ")]),
-                      ("DIÊM NGHIỆP", salt_items)]
+        # Dashboard is already the page-level home; keep it out of the
+        # sidebar groups so users do not see two consecutive "Trang chủ"
+        # labels while retaining the brand link as a quick route home.
+        nav_groups = [("DIÊM NGHIỆP", salt_items)]
         if ocop_available():
             ocop_items = [("/ocop", "table", "Tra cứu / Xuất báo cáo")]
             if is_chi_cuc_user(session):
@@ -3035,7 +3037,7 @@ class Handler(BaseHTTPRequestHandler):
         # =========================
         # TRANG ĐĂNG NHẬP
         # =========================
-        if path == "/":
+        if path in ("/", "/index", "/index.html"):
 
             if session:
                 self.redirect("/dashboard")
