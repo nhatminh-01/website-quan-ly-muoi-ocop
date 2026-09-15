@@ -18,11 +18,12 @@ def get_user(con, user_id):
 
 
 def find_user_by_username(con, username):
+    """Authenticate only active deployment roles; legacy unit rows stay queryable elsewhere."""
     return con.execute(
         """SELECT u.*, c.password_hash
            FROM users u
            JOIN user_credentials c ON c.user_id=u.id
-           WHERE u.username=?""",
+           WHERE u.username=? AND u.role IN ('admin','staff')""",
         (username,),
     ).fetchone()
 
