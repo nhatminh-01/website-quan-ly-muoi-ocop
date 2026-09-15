@@ -52,20 +52,39 @@ def import_page(session, con, helpers):
         f"<td>{_status_badge(b['status'])}</td><td>{_e(b['username'])}</td><td>{_e(b['imported_at'])}</td></tr>"
         for b in batches
     ) or '<tr><td colspan="9" class="empty">Chưa có đợt import OCOP.</td></tr>'
+    upload = session.get("ocop_import_upload")
+    if upload:
+        sheet_names = upload.get("sheet_names", [])
+        selected_sheet = upload.get("selected_sheet") or upload.get("recommended_sheet") or (sheet_names[0] if sheet_names else "")
+        options = "".join(
+            f'<option value="{_e(name)}"{" selected" if name == selected_sheet else ""}>{_e(name)}</option>'
+            for name in sheet_names
+        )
+        workflow = f'''
+      <form class="card js-loading-form" method="post" action="/ocop/import/preview">
+        {csrf}
+        <div class="weekly-step"><span>2</span><div><strong>Chọn sheet dữ liệu</strong><small>Hệ thống sẽ dùng đúng sheet bạn chọn để xem trước.</small></div></div>
+        <div class="import-file-name"><span>File Excel OCOP</span><strong>{_e(upload["filename"])}</strong></div>
+        <div class="field sheet-picker"><label for="ocop-sheet">Sheet</label><select id="ocop-sheet" name="sheet_name" required>{options}</select></div>
+        <div class="actions"><button class="btn primary" type="submit">Xem trước</button><a class="btn" href="/ocop/import?reset=1">Hủy file này</a></div>
+      </form>'''
+        heading = '<h1>Chọn sheet dữ liệu OCOP</h1><div class="subtitle">Bước 2: chọn sheet rồi kiểm tra dữ liệu trước khi đồng bộ.</div>'
+    else:
+        workflow = f'''
+      <form class="card js-loading-form" method="post" action="/ocop/import" enctype="multipart/form-data">
+        {csrf}
+        <div class="weekly-step"><span>1</span><div><strong>Chọn file Excel</strong><small>Hệ thống đọc danh sách sheet trước, chưa ghi dữ liệu OCOP.</small></div></div>
+        <div class="field"><label for="ocop-excel-file">File Excel OCOP (.xlsx)</label><input id="ocop-excel-file" type="file" name="excel_file" accept=".xlsx" required></div>
+        <div class="actions"><button class="btn primary" type="submit">Tiếp tục</button></div>
+      </form>'''
+        heading = '<h1>Import Excel OCOP</h1><div class="subtitle">Bước 1: chọn file Excel. Sheet sẽ được chọn ở bước tiếp theo.</div>'
     body = f"""
     <div class="container ocop-page">{flash}
       <div class="page-head"><div><div class="ocop-breadcrumb"><a href="/ocop">OCOP</a></div>
-        <h1>Import Excel OCOP</h1><div class="subtitle">Nạp dữ liệu lịch sử từ CCPTNT OCOP.xlsx theo quy trình xem trước → kiểm tra → xác nhận.</div></div>
+        {heading}</div>
         <div class="actions"><a class="btn" href="/ocop/recognitions">Lịch sử công nhận</a></div></div>
       <div class="notice info"><b>Nguyên tắc an toàn:</b> hệ thống giữ nguyên dữ liệu nguồn trong staging, không tự tạo mã xã/phường và không tự sửa mâu thuẫn hạng sao. Địa bàn chưa có mã chính thức sẽ được báo lỗi để bổ sung trong Danh mục đơn vị hành chính.</div>
-      <form class="card js-loading-form" method="post" action="/ocop/import" enctype="multipart/form-data">
-        {csrf}
-        <div class="grid">
-          <div class="field"><label>File Excel OCOP (.xlsx)</label><input type="file" name="excel_file" accept=".xlsx" required></div>
-          <div class="field"><label>Tên sheet</label><input name="sheet_name" value="Loc" maxlength="255" placeholder="Loc"></div>
-        </div>
-        <button class="btn primary" type="submit" style="margin-top:16px">Xem trước và kiểm tra</button>
-      </form>
+      {workflow}
       <section class="card"><div class="ocop-detail-heading"><h2 class="ocop-section-heading">Lịch sử import</h2></div>
         <div class="table-wrap"><table class="summary-table"><thead><tr><th>ID</th><th>File</th><th>Sheet</th><th>Dòng</th><th>Cảnh báo</th><th>Lỗi</th><th>Trạng thái</th><th>Người import</th><th>Thời gian</th></tr></thead><tbody>{rows}</tbody></table></div>
       </section>
@@ -111,7 +130,7 @@ def preview_page(session, preview, helpers):
     <div class="container ocop-page">
       <div class="page-head"><div><div class="ocop-breadcrumb"><a href="/ocop">OCOP</a> / <a href="/ocop/import">Import</a></div>
         <h1>Xem trước import OCOP</h1><div class="subtitle">{_e(preview['filename'])} · sheet {_e(preview['sheet_name'])}</div></div>
-        <div class="actions"><a class="btn" href="/ocop/import">Chọn lại file</a></div></div>
+        <div class="actions"><a class="btn" href="/ocop/import?reset=1">Chọn lại file</a></div></div>
       <div class="ocop-metrics">
         <div class="ocop-metric"><span>Sản phẩm nguồn</span><strong>{preview['product_count']}</strong><small>{preview['entity_count']} chủ thể</small></div>
         <div class="ocop-metric"><span>Lịch sử công nhận</span><strong>{preview['recognition_count']}</strong><small>Lần 1 + lần 2/nâng hạng</small></div>

@@ -165,7 +165,7 @@ def reset_identity_sequences(target) -> None:
             SELECT table_schema, table_name, column_name
             FROM information_schema.columns
             WHERE table_schema IN ('app','staging')
-              AND column_default LIKE 'nextval(%'
+              AND (column_default LIKE 'nextval(%' OR is_identity = 'YES')
             """
         )
         for schema, table, column in cur.fetchall():
