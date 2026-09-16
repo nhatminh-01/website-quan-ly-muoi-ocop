@@ -19,6 +19,11 @@ if not exist "%PYTHON_EXE%" (
   exit /b 1
 )
 
+rem Psycopg co the dung libpq cua PostgreSQL local neu binary wrapper bi Windows chan.
+if exist "C:\Program Files\PostgreSQL\17\bin\libpq.dll" (
+  set "PATH=C:\Program Files\PostgreSQL\17\bin;%PATH%"
+)
+
 if exist "%APP_DIR%database\.env.production" (
   set "PTNT_DB_ENV_FILE=%APP_DIR%database\.env.production"
   set "DB_ENV_LABEL=production"
