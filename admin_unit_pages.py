@@ -16,7 +16,7 @@ def select_options(rows, selected="", blank="Chọn đơn vị"):
 
 
 def account_fields(con, user=None):
-    user = dict(user) if user else {"role":"unit"}
+    user = dict(user) if user else {"role":"staff"}
     mapping = con.execute("SELECT ma_don_vi_hanh_chinh FROM user_admin_units WHERE user_id=?", (user.get("id"),)).fetchone()
     selected = mapping[0] if mapping else ""
     options = select_options(admin_units.units(con, active_only=True, communes_only=True), selected)
@@ -24,10 +24,11 @@ def account_fields(con, user=None):
     if current and not current["active"]:
         options += f'<option selected disabled value="{esc(selected)}">{esc(current["name"])} — đã ngưng; chọn địa bàn hoạt động</option>'
     unit = user["role"] == "unit"
+    agency = admin_units.CHI_CUC_AGENCY_NAME
     return f'''<div class="field" data-unit-field {"" if unit else "hidden"}>
       <label>Xã/phường đang hoạt động</label><select name="unit_code" {"required" if unit else "disabled"}>{options}</select></div>
       <div class="field" data-office-field {"hidden" if unit else ""}><label>Tên cơ quan</label>
-      <input name="unit_name" value="{esc(user.get('unit_name') if not unit else 'Chi cục')}" {"disabled" if unit else "required"}></div>'''
+      <input name="unit_name" value="{esc(agency)}" readonly aria-readonly="true" {"disabled" if unit else "required"}></div>'''
 
 
 def listing(con, session, query, csrf, flash=""):
