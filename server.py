@@ -35,6 +35,7 @@ from workbook_utils import WorkbookInspectionError, inspect_workbook
 import repositories
 import admin_units
 import admin_unit_pages
+import user_profiles
 import ocop_import
 import ocop_import_pages
 import ocop_pages
@@ -660,6 +661,13 @@ def base_page(title, body, session=None, active_path=None):
             display_label = 'CHI CỤC PHÁT TRIỂN NÔNG THÔN<br>THÀNH PHỐ HỒ CHÍ MINH'
         role_label = ROLE_LABELS[session["role"]]
         initial = esc((session['username'] or 'U')[0].upper())
+        account_copy = f'<div class="account-copy"><div class="account-name">{esc(session["username"])}</div><div class="account-role">{role_label}</div></div>'
+        avatar = f'<span class="account-avatar" aria-hidden="true">{initial}</span>'
+        if is_chi_cuc_user(session):
+            account_html = (f'<div class="header-account profile-account"><a href="/profile" class="user-profile-link" title="Xem thông tin cá nhân" aria-label="Xem thông tin cá nhân">{account_copy}{avatar}</a>'
+                            '<a class="account-logout" href="/logout">Đăng xuất</a></div>')
+        else:
+            account_html = f'<div class="header-account"><div class="account-copy"><div class="account-name">{esc(session["username"])}</div><div class="account-role">{role_label}</div><a class="account-logout" href="/logout">Đăng xuất</a></div>{avatar}</div>'
         top = f"""
         <a class="skip-link" href="#main-content">Đến nội dung chính</a>
         <header class="site-header">
@@ -670,7 +678,7 @@ def base_page(title, body, session=None, active_path=None):
           </a>
           <div class="header-tools">
             <div class="header-clock"><time class="clock-time" id="clock-time">{datetime.now().strftime('%H:%M:%S')}</time><div class="clock-date" id="clock-date">{date.today().strftime('%d/%m/%Y')}</div></div>
-            <div class="header-account"><div class="account-copy"><div class="account-name">{esc(session['username'])}</div><div class="account-role">{role_label}</div><a class="account-logout" href="/logout">Đăng xuất</a></div><span class="account-avatar" aria-hidden="true">{initial}</span></div>
+            {account_html}
           </div>
         </header>
         <aside class="sidebar" id="site-sidebar" aria-label="Menu chính">
@@ -680,7 +688,7 @@ def base_page(title, body, session=None, active_path=None):
         <button type="button" id="sidebar-backdrop" class="sidebar-backdrop" aria-label="Đóng menu" tabindex="-1"></button>
         """
         body = f'<main class="app-main" id="main-content">{body}</main>'
-    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260915-weekly-summary-modal"><script src="/assets/app.js?v=20260915-weekly-summary-modal" defer></script></head><body>{top}{body}</body></html>"""
+    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260916-profile-header"><script src="/assets/app.js?v=20260915-weekly-summary-modal" defer></script></head><body>{top}{body}</body></html>"""
 
 
 # OCOP T2 is part of this single server entry point.  Keep the original page
@@ -1435,6 +1443,9 @@ def users_page(session):
 
           </div>
 
+          <h2 class="section-title">Thông tin cá nhân</h2>
+          {user_profiles.personal_fields({})}
+
           <button class="btn primary" style="margin-top:12px">
             + Thêm tài khoản
           </button>
@@ -1466,7 +1477,7 @@ def users_page(session):
     return base_page("Tài khoản", body, session)
 
 
-def user_edit_page(session, user, error=""):
+def user_edit_page(session, user, error="", profile_data=None):
     if not can_manage_users(session):
         return None
 
@@ -1482,6 +1493,9 @@ def user_edit_page(session, user, error=""):
     con = db_conn()
     try:
         unit_fields = admin_unit_pages.account_fields(con, user)
+        profile = user_profiles.get_profile(con, user["id"])
+        if profile_data:
+            profile.update({field: profile_data[field] for field in user_profiles.PROFILE_FIELDS if field in profile_data})
     finally:
         con.close()
 
@@ -1551,6 +1565,9 @@ def user_edit_page(session, user, error=""):
           </div>
 
         </div>
+
+        <h2 class="section-title">Thông tin cá nhân</h2>
+        {user_profiles.personal_fields(profile)}
 
         <div class="actions" style="margin-top:16px">
           <button class="btn primary" type="submit">
@@ -3869,11 +3886,16 @@ class Handler(BaseHTTPRequestHandler):
                 unit_name, unit_code = admin_units.account_unit(con,role,data)
                 uid = create_user(con,username,hash_password(password),role,unit_name,now_text())
                 admin_units.assign_account(con,session["user_id"],uid,unit_code)
+                user_profiles.save_account_profile(con,uid,data)
                 con.commit()
                 set_flash(session,"ok","Đã tạo tài khoản và phạm vi địa bàn.")
             except admin_units.CatalogError as exc:
                 con.rollback()
                 self.send_html(base_page("Lỗi",f'<div class="container"><div class="notice err">{esc(exc)}</div></div>',session),exc.status)
+                return
+            except user_profiles.ProfileError as exc:
+                con.rollback()
+                self.send_html(base_page("Lỗi",f'<div class="container"><div class="notice err">{esc(exc)}</div><a href="/users">Quay lại tài khoản</a></div>',session),400)
                 return
             except INTEGRITY_ERRORS:
                 con.rollback()
@@ -3993,6 +4015,7 @@ class Handler(BaseHTTPRequestHandler):
                     )
 
                     admin_units.assign_account(con,session["user_id"],uid,unit_code)
+                    user_profiles.save_account_profile(con,uid,data)
                     con.commit()
                     invalidate_user_sessions(uid)
 
@@ -4005,6 +4028,10 @@ class Handler(BaseHTTPRequestHandler):
                 except admin_units.CatalogError as exc:
                     con.rollback()
                     self.send_html(user_edit_page(session,user,str(exc)),exc.status)
+                    return
+                except user_profiles.ProfileError as exc:
+                    con.rollback()
+                    self.send_html(user_edit_page(session,user,str(exc),profile_data=data),400)
                     return
                 except INTEGRITY_ERRORS:
                     con.rollback()

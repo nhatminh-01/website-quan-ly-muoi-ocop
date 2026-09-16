@@ -22,7 +22,7 @@ def _clean(value, limit):
     return text
 
 
-def validate_profile(data):
+def validate_profile(data, *, require_name=True):
     profile = {
         "full_name": _clean(data.get("full_name"), 255),
         "job_title": _clean(data.get("job_title"), 255),
@@ -31,7 +31,7 @@ def validate_profile(data):
         "official_email": _clean(data.get("official_email"), 255).lower(),
         "agency_name": CHI_CUC_AGENCY_NAME,
     }
-    if not profile["full_name"]:
+    if require_name and not profile["full_name"]:
         raise ProfileError("Vui lòng nhập họ và tên.")
     if profile["phone"] and not re.fullmatch(r"[0-9+().\-\s]{6,50}", profile["phone"]):
         raise ProfileError("Số điện thoại không đúng định dạng.")
@@ -60,8 +60,8 @@ def get_profile(con, user_id):
     }
 
 
-def save_profile(con, user_id, data):
-    profile = validate_profile(data)
+def save_profile(con, user_id, data, *, require_name=True):
+    profile = validate_profile(data, require_name=require_name)
     con.execute(
         """INSERT INTO app.user_profiles
            (user_id,full_name,job_title,department,phone,official_email,agency_name,updated_at)
@@ -87,6 +87,26 @@ def save_profile(con, user_id, data):
     return profile
 
 
+def save_account_profile(con, user_id, data):
+    """Use the account transaction and preserve fields omitted by older clients."""
+    if not any(field in data for field in PROFILE_FIELDS):
+        return
+    profile = get_profile(con, user_id)
+    profile.update({field: data[field] for field in PROFILE_FIELDS if field in data})
+    return save_profile(con, user_id, profile, require_name=False)
+
+
+def personal_fields(profile, *, require_name=False):
+    esc = lambda value: escape("" if value is None else str(value), quote=True)
+    return f"""<div class="grid">
+      <div class="field"><label for="profile-full-name">Họ và tên</label><input id="profile-full-name" name="full_name" maxlength="255" {'required' if require_name else ''} value="{esc(profile.get('full_name'))}" autocomplete="name"></div>
+      <div class="field"><label for="profile-job-title">Chức vụ</label><input id="profile-job-title" name="job_title" maxlength="255" value="{esc(profile.get('job_title'))}" placeholder="Ví dụ: Chuyên viên"></div>
+      <div class="field"><label for="profile-department">Phòng/Bộ phận</label><input id="profile-department" name="department" maxlength="255" value="{esc(profile.get('department'))}"></div>
+      <div class="field"><label for="profile-phone">Số điện thoại</label><input id="profile-phone" name="phone" maxlength="50" value="{esc(profile.get('phone'))}" inputmode="tel" autocomplete="tel"></div>
+      <div class="field"><label for="profile-email">Email công vụ</label><input id="profile-email" type="email" name="official_email" maxlength="255" value="{esc(profile.get('official_email'))}" autocomplete="email"></div>
+    </div>"""
+
+
 def profile_body(session, profile, csrf_html, role_label):
     esc = lambda value: escape("" if value is None else str(value), quote=True)
     updated = profile.get("updated_at")
@@ -108,16 +128,14 @@ def profile_body(session, profile, csrf_html, role_label):
       <div class="notice info">Vai trò, trạng thái tài khoản, tên đăng nhập và tên cơ quan do quản trị hệ thống quản lý.</div>
       <form class="card" method="post" action="/profile">
         {csrf_html}
+        <h2 class="section-title">Thông tin tài khoản</h2>
         <div class="grid">
-          <div class="field"><label>Họ và tên</label><input name="full_name" maxlength="255" required value="{esc(profile.get('full_name'))}" autocomplete="name"></div>
-          <div class="field"><label>Chức vụ</label><input name="job_title" maxlength="255" value="{esc(profile.get('job_title'))}" placeholder="Ví dụ: Chuyên viên"></div>
-          <div class="field"><label>Phòng/Bộ phận</label><input name="department" maxlength="255" value="{esc(profile.get('department'))}" placeholder="Tên phòng hoặc bộ phận công tác"></div>
-          <div class="field"><label>Số điện thoại</label><input name="phone" maxlength="50" value="{esc(profile.get('phone'))}" inputmode="tel" autocomplete="tel"></div>
-          <div class="field"><label>Email công vụ</label><input type="email" name="official_email" maxlength="255" value="{esc(profile.get('official_email'))}" autocomplete="email"></div>
-          <div class="field"><label>Tên cơ quan</label><input value="{esc(CHI_CUC_AGENCY_NAME)}" readonly aria-readonly="true"></div>
           <div class="field"><label>Tên đăng nhập</label><input value="{esc(session.get('username'))}" readonly aria-readonly="true"></div>
           <div class="field"><label>Vai trò</label><input value="{esc(role_label)}" readonly aria-readonly="true"></div>
+          <div class="field"><label>Tên cơ quan</label><input value="{esc(CHI_CUC_AGENCY_NAME)}" readonly aria-readonly="true"></div>
         </div>
+        <h2 class="section-title">Thông tin cá nhân</h2>
+        {personal_fields(profile, require_name=True)}
         <div class="actions" style="margin-top:18px"><button class="btn primary" type="submit">Lưu thông tin cá nhân</button></div>
         <p class="muted" style="margin:14px 0 0;font-size:12px">Cập nhật gần nhất: {esc(updated_label)}</p>
       </form>
@@ -129,26 +147,26 @@ def enhance_shell(content, session, profile, icon_html):
     """Add profile navigation and display the person's name in the header."""
     if not content or not session:
         return content
-    display_name = str(profile.get("full_name") or session.get("username") or "Tài khoản").strip()
+    display_name = str(profile.get("full_name") or "").strip() or str(session.get("username") or "Tài khoản").strip()
     safe_name = escape(display_name, quote=True)
     initial = escape((display_name[:1] or "U").upper(), quote=True)
 
     content = re.sub(
         r'<div class="account-name">.*?</div>',
-        f'<div class="account-name">{safe_name}</div>',
+        lambda match: f'<div class="account-name">{safe_name}</div>',
         content,
         count=1,
         flags=re.S,
     )
     content = re.sub(
         r'(<span class="account-avatar"[^>]*>).*?(</span>)',
-        rf'\1{initial}\2',
+        lambda match: match[1] + initial + match[2],
         content,
         count=1,
         flags=re.S,
     )
 
-    if 'href="/profile"' not in content:
+    if not re.search(r'<a class="sidebar-link[^>]*href="/profile"', content):
         active = content.startswith("<!doctype html>") and "<title>Thông tin cá nhân ·" in content
         active_class = " active" if active else ""
         aria = ' aria-current="page"' if active else ""
