@@ -6,6 +6,7 @@ import unicodedata
 
 from permissions import is_admin
 
+CHI_CUC_AGENCY_NAME = "Chi cục Phát triển nông thôn Thành phố Hồ Chí Minh"
 LEVELS = {"tinh":"Tỉnh / Thành phố", "huyen":"Huyện / Quận", "xa":"Xã", "phuong":"Phường", "thitran":"Thị trấn"}
 SELECT = """SELECT Ma_DonViHanhChinh AS code,TenDonVi AS name,CapHanhChinh AS level,
     Ma_DonViCapTren AS parent_code,TinhTrang AS active FROM DM_DonViHanhChinh"""
@@ -144,7 +145,7 @@ def account_unit(con, role, data):
         raise CatalogError(
             "Hệ thống hiện chỉ cấp tài khoản nội bộ Chi cục; tài khoản xã/phường đã ngừng triển khai."
         )
-    return str(data.get("unit_name", "")).strip() or "Chi cục", None
+    return CHI_CUC_AGENCY_NAME, None
 
 
 def assign_account(con, actor_id, user_id, code):
