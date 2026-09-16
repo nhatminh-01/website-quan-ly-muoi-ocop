@@ -106,7 +106,7 @@
       .module-kpi{min-width:0;padding-right:8px;border-right:1px solid #edf0f3}
       .module-kpi:last-child{border-right:0;padding-right:0}
       .module-kpi strong{display:block;color:var(--primary);font-size:20px;line-height:1.25;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-      .module-kpi strong.compact{font-size:15px;line-height:1.45}
+      .module-kpi strong.compact{font-size:15px;line-height:1.45;white-space:nowrap;overflow-wrap:normal}
       .module-kpi span{display:block;color:var(--muted);font-size:11px;line-height:1.4;margin-top:4px}
       .module-kpi small{display:block;color:#8792a1;font-size:10px;line-height:1.35;margin-top:3px}
       .module-overview-note{display:flex;align-items:center;gap:7px;margin:13px 0 0;color:#738094;font-size:11px}
@@ -255,7 +255,7 @@
         fetchDocument('/ocop?star=5&page_size=1'),
         fetchDocument('/ocop/import'),
       ]);
-      const stars = `3★ ${totalFromPagination(star3Doc)} · 4★ ${totalFromPagination(star4Doc)} · 5★ ${totalFromPagination(star5Doc)}`;
+      const stars = `3★: ${totalFromPagination(star3Doc)} | 4★: ${totalFromPagination(star4Doc)} | 5★: ${totalFromPagination(star5Doc)}`;
       const historyTable = [...importDoc.querySelectorAll('table')].find(table => table.textContent.includes('Người import') && table.textContent.includes('Thời gian'));
       const cells = historyTable ? [...(historyTable.querySelector('tbody tr')?.querySelectorAll('td') || [])] : [];
       const latest = cells.length >= 9 ? shortTimestamp(cells[8].textContent) : '—';
