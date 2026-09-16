@@ -1,6 +1,6 @@
 """Application entry point that composes the existing server with user profiles.
 
-There is still a single HTTP server and a single PostgreSQL database.  The
+There is still a single HTTP server and a single PostgreSQL database. The
 existing ``server.py`` remains the business core; this module adds the profile
 route and shell decoration without duplicating salt/OCOP handlers.
 """
@@ -68,6 +68,9 @@ class Handler(CoreHandler):
             core.csrf_input(session),
             core.ROLE_LABELS[session["role"]],
         )
+        flash = core.take_flash(session)
+        if flash:
+            body = body.replace('<div class="container profile-page">', '<div class="container profile-page">' + flash, 1)
         self.send_html(core.base_page("Thông tin cá nhân", body, session, active_path="/profile"))
 
     def do_POST(self):
@@ -111,16 +114,18 @@ class Handler(CoreHandler):
             for field in user_profiles.PROFILE_FIELDS:
                 if field in data:
                     profile[field] = data[field]
-            body = (
-                f'<div class="container"><div class="notice err">{core.esc(exc)}</div></div>'
-                + user_profiles.profile_body(
-                    session,
-                    profile,
-                    core.csrf_input(session),
-                    core.ROLE_LABELS[session["role"]],
-                )
+            form = user_profiles.profile_body(
+                session,
+                profile,
+                core.csrf_input(session),
+                core.ROLE_LABELS[session["role"]],
             )
-            self.send_html(core.base_page("Thông tin cá nhân", body, session, active_path="/profile"), 400)
+            form = form.replace(
+                '<div class="container profile-page">',
+                f'<div class="container profile-page"><div class="notice err">{core.esc(exc)}</div>',
+                1,
+            )
+            self.send_html(core.base_page("Thông tin cá nhân", form, session, active_path="/profile"), 400)
             return
         except Exception:
             con.rollback()
