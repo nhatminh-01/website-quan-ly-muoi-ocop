@@ -1,0 +1,256 @@
+"""Profile navigation and account integration through the existing app entry point."""
+from html.parser import HTMLParser
+import http.client
+import os
+from pathlib import Path
+import threading
+import unittest
+from unittest.mock import patch
+from urllib.parse import urlencode
+
+import app_server
+import backend_db
+import server
+import user_profiles
+import test_user_profiles as profile_tests
+
+
+class Page(HTMLParser):
+    def __init__(self, content):
+        super().__init__()
+        self.stack = []
+        self.nodes = []
+        self.feed(content)
+
+    def handle_starttag(self, tag, attributes):
+        node = {"tag": tag, "attrs": dict(attributes), "parents": list(self.stack), "text": ""}
+        self.nodes.append(node)
+        if tag not in ("input", "img", "link", "meta", "br", "hr"):
+            self.stack.append(node)
+
+    def handle_endtag(self, tag):
+        for index in range(len(self.stack) - 1, -1, -1):
+            if self.stack[index]["tag"] == tag:
+                self.stack = self.stack[:index]
+                break
+
+    def handle_data(self, data):
+        for node in self.stack:
+            node["text"] += data
+
+    def by_class(self, name):
+        return [node for node in self.nodes if name in node["attrs"].get("class", "").split()]
+
+    def input(self, name):
+        return next(node["attrs"] for node in self.nodes
+                    if node["tag"] == "input" and node["attrs"].get("name") == name)
+
+
+class ProfileHeaderTests(unittest.TestCase):
+    def render(self, profile, role="staff"):
+        session = {"user_id": 1, "username": "staff_test", "role": role, "unit_name": "Chi cục"}
+        with patch.object(server, "ocop_available", return_value=False):
+            content = server.base_page("Thông tin cá nhân", "", session, active_path="/profile")
+        return user_profiles.enhance_shell(content, session, profile, server.icon)
+
+    def test_full_name_role_and_avatar_are_in_one_native_profile_link(self):
+        page = Page(self.render({"full_name": "Mai Nguyễn Nhật Minh"}))
+        link = page.by_class("user-profile-link")[0]
+        self.assertEqual(link["tag"], "a")
+        self.assertEqual(link["attrs"]["href"], "/profile")
+        self.assertIn("Mai Nguyễn Nhật Minh", link["text"])
+        self.assertIn("Chuyên viên Chi cục", link["text"])
+        for name in ("account-name", "account-role", "account-avatar"):
+            self.assertIn(link, page.by_class(name)[0]["parents"])
+        self.assertEqual(page.by_class("account-avatar")[0]["text"], "M")
+        logout = page.by_class("account-logout")[0]
+        self.assertEqual(logout["attrs"]["href"], "/logout")
+        self.assertNotIn(link, logout["parents"])
+        self.assertFalse(any(node["tag"] == "a" for node in logout["parents"]))
+        sidebar = [node for node in page.by_class("sidebar-link") if node["attrs"]["href"] == "/profile"]
+        self.assertEqual(len(sidebar), 1)
+        self.assertEqual(sidebar[0]["attrs"]["aria-current"], "page")
+
+    def test_missing_or_blank_profile_falls_back_to_username(self):
+        for profile in ({}, {"full_name": ""}, {"full_name": "   "}):
+            with self.subTest(profile=profile):
+                page = Page(self.render(profile))
+                self.assertEqual(page.by_class("account-name")[0]["text"], "staff_test")
+                self.assertEqual(page.by_class("account-avatar")[0]["text"], "S")
+
+    def test_unusual_names_are_escaped_without_regex_replacement_errors(self):
+        for name in (r"Mai \ Nguyễn", '9 <script>alert("name")</script>'):
+            page = Page(self.render({"full_name": name}))
+            self.assertEqual(page.by_class("account-name")[0]["text"], name)
+            self.assertEqual(page.by_class("account-avatar")[0]["text"], name[0].upper())
+            self.assertEqual([node for node in page.nodes if node["tag"] == "script" and not node["attrs"].get("src")], [])
+
+    def test_legacy_unit_header_does_not_offer_personal_profile(self):
+        session = {"username": "old_unit", "role": "unit", "unit_name": "Xã cũ"}
+        with patch.object(server, "ocop_available", return_value=False):
+            self.assertNotIn('href="/profile"', server.base_page("Trang chủ", "", session))
+
+
+class Client:
+    def __init__(self, port):
+        self.port, self.cookie, self.csrf = port, "", ""
+
+    def request(self, method, path, data=None):
+        headers = {"Cookie": self.cookie}
+        body = None
+        if data is not None:
+            body = urlencode({"csrf": self.csrf, **data})
+            headers["Content-Type"] = "application/x-www-form-urlencoded"
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        try:
+            connection.request(method, path, body, headers)
+            response = connection.getresponse()
+            if response.getheader("Set-Cookie"):
+                self.cookie = response.getheader("Set-Cookie").split(";", 1)[0]
+            return response.status, dict(response.getheaders()), response.read().decode()
+        finally:
+            connection.close()
+
+    def login(self, username):
+        result = self.request("POST", "/login", {"username": username, "password": "Profile-test-2026"})
+        if result[0] != 303:
+            raise AssertionError(result)
+        status, _, content = self.request("GET", "/profile")
+        if status != 200:
+            raise AssertionError((status, content))
+        self.csrf = Page(content).input("csrf")["value"]
+        return self
+
+
+@unittest.skipUnless(os.getenv("OCOP_TEST_PG_DSN"), "PostgreSQL HTTP tests use disposable databases")
+class ProfileHTTPTests(unittest.TestCase):
+    connection = profile_tests.UserProfilePostgreSQLTests.connection
+    drop_database = profile_tests.UserProfilePostgreSQLTests.drop_database
+
+    def setUp(self):
+        profile_tests.UserProfilePostgreSQLTests.setUp(self)
+        root = Path(server.__file__).parent
+        with self.connection() as con:
+            for path in sorted((root / "database/sql").glob("[0-9][0-9][0-9]_*.sql")):
+                if path.name[:3] not in ("001", "003"):
+                    con.execute(path.read_text(encoding="utf-8"))
+            compat = backend_db.CompatConnection(con)
+            self.ids = {}
+            for username, role in (("profile_admin", "admin"), ("profile_staff", "staff"), ("legacy_unit", "unit")):
+                self.ids[username] = server.create_user(compat, username, server.hash_password("Profile-test-2026"), role, user_profiles.CHI_CUC_AGENCY_NAME, server.now_text())
+            compat.commit()
+        self.patch_connection = patch.object(server, "db_conn", lambda: backend_db.CompatConnection(self.connection()))
+        self.patch_connection.start()
+        self.addCleanup(self.patch_connection.stop)
+        self.patch_sessions = patch.object(server, "SESSIONS", {})
+        self.patch_sessions.start()
+        self.addCleanup(self.patch_sessions.stop)
+
+        class QuietHandler(app_server.Handler):
+            def log_message(self, *args):
+                pass
+
+        self.http = server.ThreadingHTTPServer(("127.0.0.1", 0), QuietHandler)
+        thread = threading.Thread(target=self.http.serve_forever, daemon=True)
+        thread.start()
+        def stop():
+            self.http.shutdown()
+            self.http.server_close()
+            thread.join()
+        self.addCleanup(stop)
+        self.admin = Client(self.http.server_address[1]).login("profile_admin")
+        self.staff = Client(self.http.server_address[1]).login("profile_staff")
+
+    def account(self, username):
+        with self.connection() as con:
+            return dict(con.execute("SELECT * FROM app.users WHERE id=%s", (self.ids[username],)).fetchone())
+
+    def profile(self, username):
+        with self.connection() as con:
+            return user_profiles.get_profile(backend_db.CompatConnection(con), self.ids[username])
+
+    def test_admin_and_staff_get_own_profile_and_readonly_account_fields(self):
+        for client, username in ((self.admin, "profile_admin"), (self.staff, "profile_staff")):
+            status, _, content = client.request("GET", "/profile?user_id=" + str(self.ids["legacy_unit"]))
+            self.assertEqual(status, 200)
+            page = Page(content)
+            self.assertEqual(page.by_class("account-name")[0]["text"], username)
+            readonly = [node["attrs"]["value"] for node in page.nodes if node["tag"] == "input" and "readonly" in node["attrs"]]
+            self.assertIn(username, readonly)
+            self.assertIn(server.ROLE_LABELS[self.account(username)["role"]], readonly)
+            self.assertIn(user_profiles.CHI_CUC_AGENCY_NAME, readonly)
+
+    def test_profile_post_cannot_change_another_user_or_account_properties(self):
+        admin_before = self.profile("profile_admin")
+        staff_before = self.account("profile_staff")
+        result = self.staff.request("POST", "/profile?user_id=" + str(self.ids["profile_admin"]), {
+            "user_id": self.ids["profile_admin"], "id": self.ids["profile_admin"],
+            "full_name": "Nhân viên kiểm thử", "department": "Phòng thử nghiệm",
+            "role": "admin", "username": "forged", "agency_name": "Cơ quan giả", "unit_name": "Giả",
+        })
+        self.assertEqual(result[0], 303)
+        self.assertEqual(self.profile("profile_admin"), admin_before)
+        self.assertEqual(self.account("profile_staff"), staff_before)
+        self.assertEqual(self.profile("profile_staff")["agency_name"], user_profiles.CHI_CUC_AGENCY_NAME)
+        self.assertEqual(self.profile("profile_staff")["full_name"], "Nhân viên kiểm thử")
+        self.assertEqual(self.staff.request("GET", f'/users/{self.ids["profile_admin"]}/edit')[0], 403)
+
+    def test_admin_and_self_edits_share_the_same_profile_in_both_directions(self):
+        uid = self.ids["profile_staff"]
+        self.assertEqual(self.admin.request("POST", f"/users/{uid}/edit", {
+            "username": "profile_staff", "role": "staff", "active": "1", "password": "",
+            "full_name": "Nguyễn Văn A", "job_title": "Chuyên viên", "department": "Phòng A",
+            "phone": "0901234567", "official_email": "a@example.gov.vn", "unit_name": "Giả",
+        })[0], 303)
+        self.staff.login("profile_staff")
+        page = Page(self.staff.request("GET", "/profile")[2])
+        self.assertEqual(page.by_class("account-name")[0]["text"], "Nguyễn Văn A")
+        self.assertEqual(page.input("full_name")["value"], "Nguyễn Văn A")
+        self.assertEqual(page.input("department")["value"], "Phòng A")
+        self.assertEqual(self.staff.request("POST", "/profile", {
+            "full_name": "Nguyễn Văn A", "department": "Phòng B", "job_title": "Phó trưởng phòng",
+            "phone": "0907654321", "official_email": "a@example.gov.vn",
+        })[0], 303)
+        page = Page(self.admin.request("GET", f"/users/{uid}/edit")[2])
+        self.assertEqual(page.input("department")["value"], "Phòng B")
+        self.assertEqual(page.input("job_title")["value"], "Phó trưởng phòng")
+        # Omitted profile fields must survive an account-only edit.
+        self.assertEqual(self.admin.request("POST", f"/users/{uid}/edit", {"username":"profile_staff", "role":"staff", "active":"1"})[0], 303)
+        self.assertEqual(self.profile("profile_staff")["department"], "Phòng B")
+
+    def test_account_creation_and_profile_validation_are_atomic(self):
+        data = {"username":"new_staff", "password":"Profile-test-2026", "role":"staff", "full_name":"Mai Nguyễn Nhật Minh", "official_email":"bad-email"}
+        self.assertEqual(self.admin.request("POST", "/users/new", data)[0], 400)
+        with self.connection() as con:
+            self.assertEqual(con.execute("SELECT COUNT(*) FROM app.users WHERE username='new_staff'").fetchone()[0], 0)
+        self.assertEqual(self.admin.request("POST", "/users/new", {**data, "official_email":"minh@example.gov.vn"})[0], 303)
+        client = Client(self.http.server_address[1]).login("new_staff")
+        self.assertEqual(Page(client.request("GET", "/profile")[2]).by_class("account-name")[0]["text"], data["full_name"])
+        before = self.account("profile_staff")
+        self.assertEqual(self.admin.request("POST", f'/users/{self.ids["profile_staff"]}/edit', {
+            "username":"must_rollback", "role":"staff", "active":"1", "full_name":"A", "official_email":"invalid",
+        })[0], 400)
+        self.assertEqual(self.account("profile_staff"), before)
+
+    def test_csrf_logout_and_legacy_unit_policy_remain_enforced(self):
+        before = self.profile("profile_staff")
+        self.assertEqual(self.staff.request("POST", "/profile", {"csrf":"invalid", "full_name":"A"})[0], 400)
+        self.assertEqual(self.profile("profile_staff"), before)
+        legacy = Client(self.http.server_address[1])
+        self.assertNotEqual(legacy.request("POST", "/login", {"username":"legacy_unit", "password":"Profile-test-2026"})[0], 303)
+        with self.connection() as con:
+            row = server.get_user(backend_db.CompatConnection(con), self.ids["legacy_unit"])
+            sid = server.new_session(row)
+        legacy.cookie = "salt_session=" + sid
+        self.assertEqual(legacy.request("GET", "/profile")[0], 403)
+        self.assertEqual(legacy.request("POST", "/profile", {"full_name":"Không được sửa"})[0], 403)
+        self.assertEqual(self.admin.request("POST", "/users/new", {"username":"new_unit", "password":"Profile-test-2026", "role":"unit"})[0], 400)
+        self.assertEqual(self.staff.request("GET", "/logout")[0], 303)
+        self.assertEqual(self.staff.request("GET", "/profile")[0], 303)
+
+    def test_existing_business_routes_keep_working_with_profile_header(self):
+        for path in ("/dashboard", "/records", "/import-excel", "/ocop", "/ocop/import"):
+            with self.subTest(path=path):
+                status, _, content = self.staff.request("GET", path)
+                self.assertEqual(status, 200)
+                self.assertEqual(Page(content).by_class("user-profile-link")[0]["attrs"]["href"], "/profile")
