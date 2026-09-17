@@ -186,9 +186,16 @@ def get_ocop_dashboard(con, session, filters=None):
     return ocop_services.get_ocop_expiry_summary(con, session, filters)
 
 
-def get_ocop_catalog_counts(con, session):
+def get_ocop_catalog_counts(con, session, filters=None):
     """Return legacy home-card counts while applying the current scope."""
     scope = ocop_services.get_scope(con, session)
+    selected = str(_value(filters, "unit_code", _value(filters, "unit", ""))).strip()
+    if scope is not None:
+        if selected and selected != scope:
+            ocop_services._check_unit(con, session, selected)
+    elif selected:
+        ocop_services._check_unit(con, session, selected)
+        scope = selected
     unit_predicate = " AND c.Ma_DonViHanhChinh=?" if scope else ""
     product_predicate = " AND p.ma_don_vi_hanh_chinh=?" if scope else ""
     args = [scope, scope] if scope else []
@@ -226,7 +233,19 @@ def get_home_dashboard(con, session):
 
 def get_dashboard_data(con, session, *, salt_filters=None, ocop_filters=None):
     """Return the combined model planned for the future common dashboard."""
+    salt = get_salt_dashboard(con, session, salt_filters)
+    ocop_summary = get_ocop_dashboard(con, session, ocop_filters)
+    catalog = get_ocop_catalog_counts(con, session, ocop_filters)
     return {
-        "salt": get_salt_dashboard(con, session, salt_filters),
-        "ocop": get_ocop_dashboard(con, session, ocop_filters),
+        "salt": salt,
+        "ocop": {
+            **ocop_summary,
+            "managed_products": catalog["products"],
+            "managed_entities": catalog["entities"],
+        },
     }
+
+
+def get_dashboard_unit_options(con, session):
+    """Return the existing authorized commune/ward catalog for dashboard filters."""
+    return ocop_services.unit_options(con, session)

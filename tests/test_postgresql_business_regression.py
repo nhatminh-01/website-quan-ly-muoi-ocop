@@ -361,6 +361,12 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
             self.assertEqual(
                 dashboard_services.get_ocop_dashboard(con, session), summary
             )
+            combined = dashboard_services.get_dashboard_data(
+                con, session, salt_filters={"week": ""}, ocop_filters={}
+            )
+            self.assertIsNone(combined["salt"])
+            self.assertEqual(combined["ocop"]["managed_products"], 9)
+            self.assertEqual(combined["ocop"]["managed_entities"], 8)
             self.assertEqual(
                 [row["expiry_date"] for row in ocop_services.get_expiring_ocop_products(con, session)],
                 sorted(row["expiry_date"] for row in ocop_services.get_expiring_ocop_products(con, session)),

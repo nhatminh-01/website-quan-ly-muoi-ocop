@@ -693,7 +693,7 @@ def base_page(title, body, session=None, active_path=None):
         <button type="button" id="sidebar-backdrop" class="sidebar-backdrop" aria-label="Đóng menu" tabindex="-1"></button>
         """
         body = f'<main class="app-main" id="main-content">{body}</main>'
-    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260917-ocop-expiry-alerts"><script src="/assets/app.js?v=20260916-sidebar-scroll-v2" defer></script></head><body>{top}{body}</body></html>"""
+    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260917-dashboard-v1"><script src="/assets/app.js?v=20260916-sidebar-scroll-v2" defer></script></head><body>{top}{body}</body></html>"""
 
 
 # OCOP T2 is part of this single server entry point.  Keep the original page
@@ -792,41 +792,185 @@ def get_units(con):
     return [r["name"] for r in admin_units.units(con, active_only=True, communes_only=True)]
 
 
-def landing_page(session):
-    """Small home page exposing only the two operational modules."""
+def _dashboard_value(value):
+    return "—" if value is None else fmt_num(value)
+
+
+def _dashboard_change(change, unit):
+    if not change:
+        return ""
+    delta = change.get("delta")
+    percent = change.get("percent_change")
+    if percent is not None:
+        arrow = "▲" if delta > 0 else "▼" if delta < 0 else "•"
+        text = f"{arrow} {fmt_num(abs(percent), 1)}% so với kỳ trước"
+    elif delta is not None:
+        arrow = "▲" if delta > 0 else "▼" if delta < 0 else "•"
+        text = f"{arrow} {fmt_num(abs(delta), 1)} {unit} so với kỳ trước"
+    else:
+        return ""
+    return f'<div class="dashboard-card-change">{esc(text)}</div>'
+
+
+def _dashboard_metric_card(title, metric, unit, symbol, *, change=None,
+                           breakdown=False, warning=False):
+    tone = " warning" if warning else ""
+    parts = [
+        f'<article class="dashboard-stat-card{tone}">'
+        f'<div class="dashboard-stat-heading"><h3>{esc(title)}</h3>{icon(symbol)}</div>'
+        f'<div class="dashboard-stat-value">{_dashboard_value(metric.get("total"))} <small>{esc(unit)}</small></div>'
+        f'{_dashboard_change(change, unit)}'
+    ]
+    if breakdown:
+        parts.append(
+            '<div class="dashboard-stat-breakdown">'
+            f'<span><b>Muối đất</b><strong>{_dashboard_value(metric.get("land"))} <small>{esc(unit)}</small></strong></span>'
+            f'<span><b>Muối trải bạt</b><strong>{_dashboard_value(metric.get("tarp"))} <small>{esc(unit)}</small></strong></span>'
+            '</div>'
+        )
+    parts.append('</article>')
+    return ''.join(parts)
+
+
+def _dashboard_summary_card(title, value, symbol, *, href="", warning=False):
+    tag = "a" if href else "article"
+    tone = " warning" if warning else ""
+    link = f' href="{esc(href)}"' if href else ""
+    return (
+        f'<{tag} class="dashboard-summary-card{tone}{" dashboard-summary-link" if href else ""}"{link}>'
+        f'<div class="dashboard-summary-heading"><h3>{esc(title)}</h3>{icon(symbol)}</div>'
+        f'<strong>{_dashboard_value(value)}</strong>'
+        f'{"<span>Xem danh sách cảnh báo →</span>" if href else ""}'
+        f'</{tag}>'
+    )
+
+
+def landing_page(session, query=""):
+    """Render the common monitoring dashboard from the Plan 04 data model."""
+    params = parse_qs(query)
+    selected_unit = params.get("unit", [""])[0].strip()
+    selected_week = params.get("week", [""])[0].strip()
+    salt_filters = {"unit": selected_unit, "week": selected_week}
+    ocop_filters = {"unit": selected_unit}
     con = db_conn()
     try:
-        dashboard = dashboard_services.get_home_dashboard(con, session)
+        dashboard = dashboard_services.get_dashboard_data(
+            con, session, salt_filters=salt_filters, ocop_filters=ocop_filters
+        )
+        unit_options = dashboard_services.get_dashboard_unit_options(con, session)
     finally:
         con.close()
-    salt_batches = dashboard["salt"]["import_batches"]
-    salt_rows = dashboard["salt"]["import_rows"]
-    ocop_entities = dashboard["ocop"]["entities"]
-    ocop_products = dashboard["ocop"]["products"]
-    ocop_expiry = dashboard["ocop"]["summary"]
-    salt_import_action = '<a class="btn primary" href="/import-excel">Import báo cáo</a>' if is_chi_cuc_user(session) else ''
-    ocop_import_action = '<a class="btn primary" href="/ocop/import">Import dữ liệu</a>' if is_chi_cuc_user(session) else ''
+
+    salt = dashboard["salt"]
+    ocop = dashboard["ocop"]
+    if is_chi_cuc_user(session):
+        unit_options_html = '<option value="">Toàn thành phố</option>'
+        unit_options_html += ''.join(
+            f'<option value="{esc(row["code"])}" {"selected" if row["code"] == selected_unit else ""}>'
+            f'{esc(row["name"])}</option>'
+            for row in unit_options
+        )
+    else:
+        unit_options_html = ''.join(
+            f'<option value="{esc(row["code"])}" selected>{esc(row["name"])}</option>'
+            for row in unit_options
+        )
+
+    if salt:
+        selected_period = salt["selected"]
+        week_options = ''.join(
+            f'<option value="{esc(period["week_code"])}" {"selected" if period["week_code"] == selected_period["week_code"] else ""}>'
+            f'{esc(period["week_code"])}</option>'
+            for period in salt["periods"]
+        )
+        current_metrics = salt["current_metrics"]
+        changes = salt["changes"]
+        salt_period_label = (
+            f'{esc(selected_period["week_code"])} · '
+            f'{date.fromisoformat(str(selected_period["report_date"])).strftime("%d/%m/%Y")}'
+        )
+        salt_cards = ''.join([
+            _dashboard_metric_card(
+                "DIỆN TÍCH SẢN XUẤT", current_metrics["area"], "ha", "area",
+                change=changes["area"]["total"], breakdown=True,
+            ),
+            _dashboard_metric_card(
+                "SẢN LƯỢNG THU HOẠCH", current_metrics["harvest"], "tấn", "harvest",
+                change=changes["harvest"]["total"], breakdown=True,
+            ),
+            _dashboard_metric_card(
+                "ĐÃ TIÊU THỤ", current_metrics["consumption"], "tấn", "sold",
+                change=changes["consumption"]["total"],
+            ),
+            _dashboard_metric_card(
+                "CÒN LẠI", current_metrics["remaining"], "tấn", "stock",
+                change=changes["remaining"]["total"], warning=True,
+            ),
+        ])
+        salt_people = (
+            '<div class="dashboard-people">'
+            f'<div><span>Số hộ làm muối</span><strong>{_dashboard_value(current_metrics["households"]["total"])}</strong><small>hộ</small></div>'
+            f'<div><span>Số lao động</span><strong>{_dashboard_value(current_metrics["workers"]["total"])}</strong><small>người</small></div>'
+            '</div>'
+        )
+    else:
+        week_options = '<option value="">Chưa có kỳ dữ liệu</option>'
+        salt_period_label = "Chưa có dữ liệu"
+        salt_cards = '<div class="dashboard-empty">Chưa có dữ liệu Diêm nghiệp trong phạm vi đang xem.</div>'
+        salt_people = ''
+
+    detail_params = {"week": selected_period["week_code"]} if salt else {}
+    if selected_unit:
+        detail_params["unit"] = selected_unit
+    salt_detail_href = "/salt/weekly" + ("?" + urlencode(detail_params) if detail_params else "")
+    ocop_updated = date.today().strftime("%d/%m/%Y")
+    ocop_cards = ''.join([
+        _dashboard_summary_card("SẢN PHẨM OCOP", ocop["managed_products"], "table"),
+        _dashboard_summary_card("CHỦ THỂ OCOP", ocop["managed_entities"], "users"),
+        _dashboard_summary_card("CÒN HIỆU LỰC", ocop["valid_products"], "check"),
+        _dashboard_summary_card(
+            "SẮP HẾT HẠN ≤ 3 THÁNG", ocop["expiring_products"], "alert",
+            href="/ocop/expiry-alerts", warning=True,
+        ),
+    ])
+    ocop_meta = (
+        '<div class="dashboard-ocop-meta">'
+        '<div class="dashboard-stars" aria-label="Phân bố hạng sao">'
+        f'<span><b>3 sao</b><strong>{_dashboard_value(ocop["star_3"])}</strong></span>'
+        f'<span><b>4 sao</b><strong>{_dashboard_value(ocop["star_4"])}</strong></span>'
+        f'<span><b>5 sao</b><strong>{_dashboard_value(ocop["star_5"])}</strong></span>'
+        '</div>'
+        f'<span class="dashboard-badge danger">Đã hết hạn: {_dashboard_value(ocop["expired_products"])}</span>'
+        + (
+            f'<span class="dashboard-badge muted">Chưa có ngày hết hạn: {_dashboard_value(ocop["missing_expiry"])}</span>'
+            if ocop["missing_expiry"] else ""
+        )
+        + '</div>'
+    )
+
     body = f"""
-    <div class="container">
+    <div class="container dashboard-home">
       {take_flash(session)}
-      <div class="page-head"><div><h1>Trang chủ</h1><div class="subtitle">Quản lý dữ liệu Diêm nghiệp và OCOP.</div></div></div>
-      <div class="module-grid">
-        <section class="module-card">
-          <div class="module-card-heading"><div><span class="eyebrow">PHÂN HỆ 01</span><h2>DIÊM NGHIỆP</h2></div>{icon('area')}</div>
-          <p>Nhập báo cáo tuần, tra cứu theo xã/phường và xuất đúng tập dữ liệu đang lọc.</p>
-          <div class="module-stats"><span><strong>{salt_batches}</strong> sheet đã nhập</span><span><strong>{salt_rows}</strong> dòng dữ liệu</span></div>
-          <div class="actions">{salt_import_action}<a class="btn" href="/records">Tra cứu Diêm nghiệp</a></div>
-        </section>
-        <section class="module-card">
-          <div class="module-card-heading"><div><span class="eyebrow">PHÂN HỆ 02</span><h2>OCOP</h2></div>{icon('table')}</div>
-          <p>Tra cứu sản phẩm theo địa bàn, chủ thể, nhóm sản phẩm và hạng sao.</p>
-          <div class="module-stats"><span><strong>{ocop_entities}</strong> chủ thể</span><span><strong>{ocop_products}</strong> sản phẩm</span></div>
-          <div class="module-alert"><div><span>SẮP HẾT HẠN ≤ 3 THÁNG</span><strong>{fmt_num(ocop_expiry['expiring_products'])}</strong><small>Toàn bộ sản phẩm theo recognition hiện hành</small></div><a class="btn small" href="/ocop/expiry-alerts">Xem cảnh báo</a></div>
-          <div class="actions">{ocop_import_action}<a class="btn" href="/ocop">Tra cứu / Xuất báo cáo</a></div>
-        </section>
-      </div>
+      <div class="page-head"><div><h1>Bảng giám sát</h1><div class="subtitle">Tổng hợp nhanh tình hình Diêm nghiệp và OCOP theo phạm vi được phép xem.</div></div></div>
+      <form class="dashboard-filter-card" method="get" action="/dashboard">
+        <div class="field"><label for="dashboard-unit">Đơn vị</label><select id="dashboard-unit" name="unit">{unit_options_html}</select></div>
+        <div class="field"><label for="dashboard-week">Kỳ Diêm nghiệp</label><select id="dashboard-week" name="week">{week_options}</select></div>
+        <button class="btn primary" type="submit">Áp dụng</button><a class="btn" href="/dashboard">Đặt lại bộ lọc</a>
+      </form>
+      <section class="dashboard-section" aria-labelledby="salt-dashboard-title">
+        <div class="dashboard-section-heading"><div><span class="eyebrow">PHÂN HỆ 01</span><h2 id="salt-dashboard-title">DIÊM NGHIỆP</h2></div><div class="dashboard-section-meta">Kỳ dữ liệu<br><strong>{salt_period_label}</strong></div></div>
+        <div class="dashboard-stat-grid">{salt_cards}</div>
+        {salt_people}
+        <div class="dashboard-section-footer"><span>Số liệu theo kỳ hiệu lực, breakdown lấy từ dữ liệu đã tổng hợp.</span><a class="btn small" href="{esc(salt_detail_href)}">Xem chi tiết Diêm nghiệp →</a></div>
+      </section>
+      <section class="dashboard-section" aria-labelledby="ocop-dashboard-title">
+        <div class="dashboard-section-heading"><div><span class="eyebrow">PHÂN HỆ 02</span><h2 id="ocop-dashboard-title">OCOP</h2></div><div class="dashboard-section-meta">Cập nhật ngày<br><strong>{ocop_updated}</strong></div></div>
+        <div class="dashboard-summary-grid">{ocop_cards}</div>
+        {ocop_meta}
+        <div class="dashboard-section-footer"><span>Thống kê theo recognition hiện hành và phạm vi địa bàn đang chọn.</span><a class="btn small" href="/ocop">Xem chi tiết OCOP →</a></div>
+      </section>
     </div>"""
-    return base_page("Trang chủ", body, session)
+    return base_page("Tổng quan", body, session)
 
 
 def dashboard_page(session, query=""):
@@ -3330,7 +3474,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.handle_ocop(path, parsed.query, session):
             return
         if path == "/dashboard":
-            self.send_html(landing_page(session))
+            self.send_html(landing_page(session, parsed.query))
             return
 
 

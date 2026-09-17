@@ -89,6 +89,17 @@ class ProfileHeaderTests(unittest.TestCase):
             self.assertEqual(len(scripts), 1)
             self.assertEqual(scripts[0]["attrs"].get("id"), "account-menu-script")
 
+    def test_common_dashboard_has_two_column_desktop_and_one_column_mobile_grids(self):
+        css = (Path(server.__file__).parent / "assets" / "app.css").read_text(encoding="utf-8")
+        self.assertIn(
+            ".dashboard-stat-grid,.dashboard-summary-grid{display:grid;grid-template-columns:repeat(2",
+            css,
+        )
+        self.assertIn(
+            ".dashboard-stat-grid,.dashboard-summary-grid,.dashboard-people{grid-template-columns:minmax(0,1fr)",
+            css,
+        )
+
     def test_legacy_unit_header_does_not_offer_personal_profile(self):
         session = {"username": "old_unit", "role": "unit", "unit_name": "Xã cũ"}
         with patch.object(server, "ocop_available", return_value=False):
@@ -302,3 +313,16 @@ class ProfileHTTPTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertEqual(len(Page(content).by_class("account-menu-trigger")), 1)
                 self.assertIn('href="/activity"', content)
+
+    def test_common_dashboard_renders_both_modules_and_responsive_grids(self):
+        status, _, content = self.staff.request("GET", "/dashboard")
+        self.assertEqual(status, 200)
+        self.assertIn("Bảng giám sát", content)
+        self.assertIn('aria-labelledby="salt-dashboard-title"', content)
+        self.assertIn('aria-labelledby="ocop-dashboard-title"', content)
+        self.assertIn("dashboard-stat-grid", content)
+        self.assertIn("dashboard-summary-grid", content)
+        self.assertIn("Xem chi tiết Diêm nghiệp", content)
+        self.assertIn("Xem chi tiết OCOP", content)
+        self.assertIn("Đặt lại bộ lọc", content)
+        self.assertIn("dashboard-v1", content)
