@@ -342,23 +342,10 @@ body.sidebar-collapsed{--sidebar-width:78px}
 .ocop-catalog-table td:nth-child(2){min-width:220px}
 .ocop-catalog-table td:nth-child(1),.ocop-catalog-table td:nth-child(5),.ocop-catalog-table td:nth-child(8){white-space:nowrap}
 
-/* Simplified product home: two clear operational modules. */
-.module-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;max-width:1180px}
-.module-card{padding:26px;background:#fff;border:1px solid var(--line);border-radius:14px;box-shadow:var(--shadow)}
-.module-card-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;color:var(--primary)}
-.module-card-heading h2{margin:5px 0 0;font-size:21px;color:#203149}
-.module-card-heading>.icon{width:30px;height:30px;stroke:var(--primary)}
-.module-card p{min-height:48px;color:var(--muted);line-height:1.6;margin:18px 0}
 .eyebrow{font-size:11px;font-weight:800;letter-spacing:1px;color:var(--primary)}
-.module-stats{display:flex;gap:24px;padding:14px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line);color:var(--muted);font-size:13px}
-.module-stats strong{display:block;font-size:22px;line-height:1.2;color:var(--primary)}
-.module-alert{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:16px;padding:12px 14px;border:1px solid #ecd9a8;border-left:4px solid #d79525;border-radius:9px;background:#fffaf0}
-.module-alert>div{display:grid;gap:2px;min-width:0}
-.module-alert span{color:#8c5b0b;font-size:11px;font-weight:800;letter-spacing:.35px}
-.module-alert strong{color:#a76504;font-size:25px;line-height:1.1;font-variant-numeric:tabular-nums}
-.module-alert small{color:#8a7860;font-size:11px;line-height:1.4}
-.module-card .actions{margin-top:18px}
-@media(max-width:760px){.module-grid{grid-template-columns:minmax(0,1fr)}.module-card p{min-height:0}}
+.legacy-unit-account{opacity:.74;background:#fafafa}
+.legacy-unit-account td:nth-child(2){color:#8b5b3d;font-weight:650}
+.chi-cuc-only-note{margin-bottom:16px}
 
 .ocop-alert-note{margin:4px 0 0;font-size:12px}
 .ocop-expiry-table{min-width:1120px}
@@ -378,7 +365,7 @@ body.sidebar-collapsed{--sidebar-width:78px}
 .ocop-expiry-band.critical{background:#fde7e7;color:#a33a3a}
 .ocop-expiry-band.soon{background:#fff1d6;color:#9a5f05}
 .ocop-expiry-band.later{background:#e8f1fb;color:#315f8c}
-@media(max-width:760px){.module-alert{align-items:flex-start;flex-direction:column}.module-alert .btn{align-self:flex-start}.ocop-expiry-table{min-width:1000px}}
+@media(max-width:760px){.ocop-expiry-table{min-width:1000px}}
 
 /* Common monitoring dashboard. Keep the existing dashboard components above
    for legacy pages; these classes are scoped to the redesigned home page. */
