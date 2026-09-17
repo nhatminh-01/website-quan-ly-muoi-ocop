@@ -298,6 +298,82 @@ class ProfileHTTPTests(unittest.TestCase):
         with self.connection() as con:
             return user_profiles.get_profile(backend_db.CompatConnection(con), self.ids[username])
 
+    def catalog_unit(self, code):
+        with self.connection() as con:
+            return con.execute(
+                "SELECT tendonvi, caphanhchinh, ma_donvicaptren, tinhtrang "
+                "FROM qd5277.dm_donvihanhchinh WHERE ma_donvihanhchinh=%s",
+                (code,),
+            ).fetchone()
+
+    def test_admin_units_lists_only_current_catalog_without_lifecycle_actions(self):
+        status, _, content = self.admin.request("GET", "/admin-units")
+        self.assertEqual(status, 200)
+        self.assertIn("Danh mục chính thức hiện hành", content)
+        self.assertIn("Lọc được 168 bản ghi", content)
+        self.assertIn("trên tổng <strong>168</strong>", content)
+        self.assertIn('value="phuong"', content)
+        self.assertIn('value="xa"', content)
+        self.assertIn('value="dackhu"', content)
+        self.assertNotIn("Thêm đơn vị", content)
+        self.assertNotIn("Ngưng hoạt động", content)
+        self.assertNotIn("Kích hoạt lại", content)
+        self.assertNotIn('name="active"', content)
+
+    def test_admin_units_rejects_create_and_activate_routes_without_mutation(self):
+        before_count = self.catalog_unit("26732")
+        self.assertIn(self.admin.request("GET", "/admin-units/new")[0], (404, 405))
+        self.assertIn(self.admin.request("POST", "/admin-units/new", {
+            "code": "999991", "name": "Đơn vị không được tạo", "level": "xa", "parent_code": "79",
+        })[0], (404, 405))
+        for action in ("activate", "deactivate"):
+            with self.subTest(action=action):
+                self.assertIn(self.admin.request("POST", f"/admin-units/26732/{action}")[0], (404, 405))
+        after_count = self.catalog_unit("26732")
+        self.assertEqual(after_count, before_count)
+        with self.connection() as con:
+            self.assertEqual(con.execute(
+                "SELECT COUNT(*) FROM qd5277.dm_donvihanhchinh WHERE ma_donvihanhchinh='999991'"
+            ).fetchone()[0], 0)
+
+    def test_admin_units_search_levels_pagination_and_edit_preserve_status(self):
+        for query, expected in (
+            ("q=26732", ("Đặc khu Côn Đảo", "Lọc được 1 bản ghi")),
+            ("q=C%C3%B4n+%C4%90%E1%BA%A3o", ("Đặc khu Côn Đảo", "Lọc được 1 bản ghi")),
+            ("level=phuong", ("Lọc được 113 bản ghi", "Phường")),
+            ("level=xa", ("Lọc được 54 bản ghi", "Xã")),
+            ("level=dackhu", ("Lọc được 1 bản ghi", "Đặc khu")),
+            ("active=0", ("Lọc được 168 bản ghi",)),
+            ("page_size=10", ("1–10", "trên tổng <strong>168</strong>")),
+        ):
+            with self.subTest(query=query):
+                status, _, content = self.admin.request("GET", "/admin-units?" + query)
+                self.assertEqual(status, 200)
+                for fragment in expected:
+                    self.assertIn(fragment, content)
+
+        status, _, content = self.admin.request("GET", "/admin-units/26732/edit")
+        self.assertEqual(status, 200)
+        self.assertIn('name="code"', content)
+        self.assertIn("readonly", content)
+        self.assertNotIn('name="active"', content)
+        self.assertIn("Đặc khu Côn Đảo", content)
+        self.assertIn("Đặc khu", content)
+
+        self.assertEqual(self.admin.request("POST", "/admin-units/26732/edit", {
+            "code": "26732", "name": "Đặc khu Côn Đảo (kiểm thử)",
+            "level": "dackhu", "parent_code": "79", "active": "0",
+        })[0], 303)
+        edited = self.catalog_unit("26732")
+        self.assertEqual(edited[0], "Đặc khu Côn Đảo (kiểm thử)")
+        self.assertEqual(tuple(edited[index] for index in range(1, 4)), ("dackhu", "79", True))
+        self.assertEqual(self.admin.request("POST", "/admin-units/26732/edit", {
+            "code": "26732", "name": "Đặc khu Côn Đảo", "level": "dackhu", "parent_code": "79",
+        })[0], 303)
+        restored = self.catalog_unit("26732")
+        self.assertEqual(tuple(restored[index] for index in range(4)),
+                         ("Đặc khu Côn Đảo", "dackhu", "79", True))
+
     def test_admin_and_staff_get_own_profile_and_readonly_account_fields(self):
         for client, username in ((self.admin, "profile_admin"), (self.staff, "profile_staff")):
             status, _, content = client.request("GET", "/profile?user_id=" + str(self.ids["legacy_unit"]))

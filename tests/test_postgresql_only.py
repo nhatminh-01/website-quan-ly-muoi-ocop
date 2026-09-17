@@ -78,6 +78,7 @@ class PostgreSQLSchemaTests(unittest.TestCase):
             "007_ocop_init_only.sql", "008_ocop_dynamic_criteria.sql",
             "009_staff_role.sql", "010_weekly_salt_imports.sql",
             "011_weekly_foundation.sql", "012_admin_units.sql",
+            "021_hcmc_168_admin_units.sql",
         )
         with self.connection() as connection:
             for name in migration_names:
@@ -87,7 +88,17 @@ class PostgreSQLSchemaTests(unittest.TestCase):
                 "WHERE schema_name IN ('app','qd5277','staging')")}
             self.assertEqual(schemas, {"app", "qd5277", "staging"})
             self.assertEqual(connection.execute(
-                "SELECT COUNT(*) FROM app.schema_migrations").fetchone()[0], 9)
+                "SELECT COUNT(*) FROM app.schema_migrations").fetchone()[0], 10)
+            unit_counts = [(row[0], row[1]) for row in connection.execute(
+                "SELECT caphanhchinh, COUNT(*) FROM qd5277.dm_donvihanhchinh "
+                "WHERE ma_donvicaptren='79' AND tinhtrang=TRUE "
+                "GROUP BY caphanhchinh ORDER BY caphanhchinh").fetchall()]
+            self.assertEqual(unit_counts, [("dackhu", 1), ("phuong", 113), ("xa", 54)])
+            special = connection.execute(
+                "SELECT tendonvi, caphanhchinh, ma_donvicaptren FROM qd5277.dm_donvihanhchinh "
+                "WHERE ma_donvihanhchinh='26732'").fetchone()
+            self.assertEqual((special[0], special[1], special[2]),
+                             ("Đặc khu Côn Đảo", "dackhu", "79"))
             self.assertEqual(connection.execute(
                 "SELECT COUNT(*) FROM qd5277.DN_SanLuongMuoi").fetchone()[0], 0)
             admin_id = connection.execute(
@@ -96,8 +107,10 @@ class PostgreSQLSchemaTests(unittest.TestCase):
             ).fetchone()[0]
             compat = backend_db.CompatConnection(connection)
             compat.execute("BEGIN")
-            admin_units.save_unit(
+            admin_units.update_unit(
                 compat, {"user_id": admin_id, "role": "admin"},
-                {"code": "99999", "name": "Xã kiểm thử", "level": "xa", "active": True},
+                {"code": "27595", "name": "Xã Tân Nhựt", "level": "xa", "parent_code": "79"},
+                "27595",
             )
-            self.assertEqual(admin_units.get_unit(compat, "99999")["name"], "Xã kiểm thử")
+            self.assertEqual(admin_units.get_unit(compat, "27595")["name"], "Xã Tân Nhựt")
+            self.assertTrue(admin_units.get_unit(compat, "27595")["active"])

@@ -7,7 +7,8 @@ import unicodedata
 from permissions import is_admin
 
 CHI_CUC_AGENCY_NAME = "Chi cục Phát triển nông thôn Thành phố Hồ Chí Minh"
-LEVELS = {"tinh":"Tỉnh / Thành phố", "huyen":"Huyện / Quận", "xa":"Xã", "phuong":"Phường", "thitran":"Thị trấn"}
+LEVELS = {"tinh":"Tỉnh / Thành phố", "huyen":"Huyện / Quận", "xa":"Xã", "phuong":"Phường", "dackhu":"Đặc khu", "thitran":"Thị trấn"}
+CURRENT_LEVELS = ("xa", "phuong", "dackhu")
 SELECT = """SELECT Ma_DonViHanhChinh AS code,TenDonVi AS name,CapHanhChinh AS level,
     Ma_DonViCapTren AS parent_code,TinhTrang AS active FROM DM_DonViHanhChinh"""
 
@@ -27,7 +28,7 @@ def units(con, *, active_only=False, communes_only=False):
     if active_only:
         conditions.append("TinhTrang=TRUE")
     if communes_only:
-        conditions.append("CapHanhChinh IN ('xa','phuong')")
+        conditions.append("CapHanhChinh IN ('xa','phuong','dackhu')")
     return [dict(row) for row in con.execute(SELECT + " WHERE " + " AND ".join(conditions)
                                             + " ORDER BY TenDonVi,Ma_DonViHanhChinh").fetchall()]
 
@@ -79,25 +80,22 @@ def audit(con, actor_id, action, code, before, after):
         VALUES(NULL,?,?,?,?)""", (actor_id, action, detail, datetime.now().isoformat(timespec="seconds")))
 
 
-def save_unit(con, session, data, code=None):
+def update_unit(con, session, data, code):
     con.execute("LOCK TABLE DM_DonViHanhChinh IN SHARE ROW EXCLUSIVE MODE")
     require_admin(con, session)
-    old = get_unit(con, code) if code else None
-    if code and not old:
+    code = str(code or "").strip()
+    old = get_unit(con, code)
+    if not old or not old["active"] or old["level"] not in CURRENT_LEVELS:
         raise CatalogError("Không tìm thấy đơn vị.", 404)
     proposed_code = str(data.get("code", "")).strip()
-    if code and proposed_code and proposed_code != code:
-        raise CatalogError("Mã đơn vị đã tạo không được đổi; các dữ liệu liên kết dùng mã này.")
-    code = code or proposed_code
+    if proposed_code and proposed_code != code:
+        raise CatalogError("Mã đơn vị hiện tại không được đổi; các dữ liệu liên kết dùng mã này.")
     if not re.fullmatch(r"[0-9]{1,10}", code):
         raise CatalogError("Mã hành chính phải gồm 1–10 chữ số, không dùng mã TMP.")
-    if old is None and get_unit(con, code):
-        raise CatalogError("Mã đơn vị đã tồn tại.", 409)
     name = unicodedata.normalize("NFC", str(data.get("name", "")).strip())
     level = str(data.get("level", ""))
     parent = str(data.get("parent_code", "")).strip() or None
-    active = data.get("active") in (True, "1", "true")
-    if not name or len(name) > 255 or level not in LEVELS:
+    if not name or len(name) > 255 or level not in CURRENT_LEVELS:
         raise CatalogError("Nhập tên đơn vị (tối đa 255 ký tự) và cấp hành chính hợp lệ.")
     # Name-based Excel lookup must remain unambiguous, including previous names.
     candidates = [(u["name"],u["code"]) for u in units(con)]
@@ -114,29 +112,15 @@ def save_unit(con, session, data, code=None):
         if not ancestor:
             raise CatalogError("Mã đơn vị cấp trên không tồn tại.")
         cursor = ancestor["parent_code"]
-    if old is None:
-        con.execute("""INSERT INTO DM_DonViHanhChinh
-            (Ma_DonViHanhChinh,TenDonVi,CapHanhChinh,Ma_DonViCapTren,TinhTrang) VALUES(?,?,?,?,?)""",
-            (code,name,level,parent,active))
-    else:
-        if old["name"] != name:
-            # Keep historical report names resolvable, without rewriting raw reports.
-            con.execute("INSERT INTO admin_unit_aliases(alias,unit_code) VALUES(?,?) ON CONFLICT(alias) DO NOTHING", (old["name"],code))
-        con.execute("""UPDATE DM_DonViHanhChinh SET TenDonVi=?,CapHanhChinh=?,Ma_DonViCapTren=?,TinhTrang=?
-            WHERE Ma_DonViHanhChinh=?""", (name,level,parent,active,code))
-        con.execute("""UPDATE users SET unit_name=? WHERE role='unit' AND id IN
-            (SELECT user_id FROM user_admin_units WHERE ma_don_vi_hanh_chinh=?)""", (name,code))
-    audit(con, session["user_id"], "Sửa đơn vị hành chính" if old else "Thêm đơn vị hành chính", code, old, get_unit(con,code))
+    if old["name"] != name:
+        # Keep historical report names resolvable, without rewriting raw reports.
+        con.execute("INSERT INTO admin_unit_aliases(alias,unit_code) VALUES(?,?) ON CONFLICT(alias) DO NOTHING", (old["name"],code))
+    con.execute("""UPDATE DM_DonViHanhChinh SET TenDonVi=?,CapHanhChinh=?,Ma_DonViCapTren=?
+        WHERE Ma_DonViHanhChinh=?""", (name,level,parent,code))
+    con.execute("""UPDATE users SET unit_name=? WHERE role='unit' AND id IN
+        (SELECT user_id FROM user_admin_units WHERE ma_don_vi_hanh_chinh=?)""", (name,code))
+    audit(con, session["user_id"], "Sửa đơn vị hành chính", code, old, get_unit(con,code))
     return code
-
-
-def set_active(con, session, code, active):
-    require_admin(con, session)
-    old = get_unit(con,code)
-    if not old:
-        raise CatalogError("Không tìm thấy đơn vị.", 404)
-    con.execute("UPDATE DM_DonViHanhChinh SET TinhTrang=? WHERE Ma_DonViHanhChinh=?", (bool(active),code))
-    audit(con,session["user_id"],"Kích hoạt đơn vị" if active else "Ngưng đơn vị",code,old,get_unit(con,code))
 
 
 def account_unit(con, role, data):
@@ -165,5 +149,5 @@ def validate_weekly_units(con, preview):
     for row in preview["rows"]:
         data = row["canonical"]
         unit = get_unit(con,data.get("ma_don_vi_hanh_chinh"), lock=True)
-        if not unit or not unit["active"] or unit["level"] not in ("xa","phuong") or unit["name"] != data.get("unit_name"):
+        if not unit or not unit["active"] or unit["level"] not in CURRENT_LEVELS or unit["name"] != data.get("unit_name"):
             raise CatalogError("Danh mục hành chính đã thay đổi. Hãy tải lại file để kiểm tra.")

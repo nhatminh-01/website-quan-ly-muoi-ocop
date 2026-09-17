@@ -7,9 +7,21 @@ các migration đánh số 014–015; bốn bảng hình học QĐ 5333 chờ Po
 
 ## Mã hành chính
 
-Tám địa bàn đã dùng mã chính thức theo Quyết định 19/2025/QĐ-TTg. Tên sai
-`Xã An Thời Đông` trong workbook được ánh xạ về `Xã An Thới Đông` (`27673`),
-trong khi staging vẫn giữ nguyên giá trị nguồn để truy vết.
+Reference canonical của mục 79 — Thành phố Hồ Chí Minh — nằm tại
+`database/reference/hcmc_admin_units_2025.csv`, gồm 168 đơn vị cấp xã theo
+Quyết định 19/2025/QĐ-TTg: 113 phường, 54 xã và 1 đặc khu. Migration
+`021_hcmc_168_admin_units.sql` upsert toàn bộ danh mục, hỗ trợ `dackhu` và giữ
+nguyên các dòng lịch sử/TMP thay vì xóa hoặc tự map mã.
+
+Chạy audit read-only và validation sau migration:
+
+```powershell
+.\.venv\Scripts\python.exe validation\audit_hcmc_admin_units.py --json
+.\.venv\Scripts\python.exe validation\validate_hcmc_admin_units.py
+```
+
+Tên sai `Xã An Thời Đông` trong workbook được ánh xạ về `Xã An Thới Đông`
+(`27673`), trong khi staging vẫn giữ nguyên giá trị nguồn để truy vết.
 
 ## Phần mềm
 
