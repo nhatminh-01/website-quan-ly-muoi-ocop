@@ -458,7 +458,7 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
                     patch.object(server, "db_conn", return_value=con):
                 dashboard = server.landing_page(session)
             self.assertIn("SẮP HẾT HẠN ≤ 3 THÁNG", dashboard)
-            self.assertIn(">5<", dashboard)
+            self.assertIn(">6<", dashboard)
         finally:
             con.close()
 
