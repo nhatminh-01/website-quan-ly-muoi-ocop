@@ -99,7 +99,7 @@ def page(con, session, csrf, query="", data=None, error=None):
     product_id = (query.get("product_id") or [""])[0] if not data else data.get("append_product_id", "")
     if (query.get("saved") or [""])[0] and not data:
         product = svc.get_product(con, session, (query["saved"])[0])
-        return f'''{MANUAL_PAGE_STYLE}<div class="container ocop-page manual-page"><div class="page-head"><div><div class="ocop-breadcrumb"><a href="/ocop">OCOP</a> / Nhập dữ liệu</div><h1>NHẬP DỮ LIỆU OCOP</h1></div><div class="actions"><a class="btn manual-import-excel" href="/ocop/import">Nhập bằng file Excel</a></div></div>
+        return f'''{MANUAL_PAGE_STYLE}<div class="container ocop-page manual-page"><div class="page-head"><div><div class="ocop-breadcrumb"><a href="/ocop">OCOP</a> / Nhập dữ liệu trực tiếp</div><h1>NHẬP DỮ LIỆU OCOP</h1></div><div class="actions"><a class="btn manual-import-excel" href="/ocop/import">Nhập bằng file Excel</a></div></div>
           <div class="notice ok" role="status">Đã lưu dữ liệu OCOP thành công.</div>
           <div class="card"><h2>{esc(product['name'])}</h2><div class="actions">
           <a class="btn primary" href="/ocop/products/{product['id']}">Xem sản phẩm</a>
@@ -148,7 +148,7 @@ def page(con, session, csrf, query="", data=None, error=None):
                      for field in ("append_product_id", "selected_entity_id") if data.get(field))
     save_button = '' if isinstance(error, registry.DuplicateProduct) else '<button class="btn primary" type="submit">Lưu dữ liệu</button>'
     return f'''{MANUAL_PAGE_STYLE}<div class="container ocop-page manual-page">
-      <div class="page-head"><div><div class="ocop-breadcrumb"><a href="/ocop">OCOP</a> / Nhập dữ liệu</div><h1>NHẬP DỮ LIỆU OCOP</h1>
+      <div class="page-head"><div><div class="ocop-breadcrumb"><a href="/ocop">OCOP</a> / Nhập dữ liệu trực tiếp</div><h1>NHẬP DỮ LIỆU OCOP</h1>
       <div class="subtitle">Nhập trực tiếp thông tin chủ thể, sản phẩm và lịch sử công nhận OCOP.</div></div>
       <div class="actions"><a class="btn manual-import-excel" href="/ocop/import">Nhập bằng file Excel</a></div></div>
       {notice}<form id="ocop-manual-form" method="post" action="/ocop/manual" data-ocop-manual>
@@ -161,5 +161,5 @@ def page(con, session, csrf, query="", data=None, error=None):
       <div data-recognition-list>{''.join(recognition_fields(index, row) for index, row in enumerate(recognitions))}</div>
       <button class="btn" type="button" data-add-recognition>+ Thêm lần công nhận</button>
       <template data-recognition-template>{recognition_fields(0)}</template></section>
-      {choices}<div class="actions manual-actions"><a class="btn" href="/ocop">Hủy</a>{save_button}</div></form>
+      {choices}<div class="actions manual-actions"><a class="btn manual-cancel" href="/ocop">Hủy</a>{save_button}</div></form>
       <script src="/assets/ocop-manual.js?v=1" defer></script></div>'''
