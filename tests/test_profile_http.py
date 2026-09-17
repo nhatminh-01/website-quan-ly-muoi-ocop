@@ -1,4 +1,4 @@
-"""Profile navigation and account integration through the existing app entry point."""
+"""Profile navigation, account integration and activity history through app_server."""
 from html.parser import HTMLParser
 import http.client
 import os
@@ -45,6 +45,12 @@ class Page(HTMLParser):
         return next(node["attrs"] for node in self.nodes
                     if node["tag"] == "input" and node["attrs"].get("name") == name)
 
+    def selected_option(self, name):
+        select = next(node for node in self.nodes if node["tag"] == "select" and node["attrs"].get("name") == name)
+        options = [node for node in self.nodes if node["tag"] == "option" and select in node["parents"]]
+        selected = [node for node in options if "selected" in node["attrs"]]
+        return (selected[0]["attrs"].get("value") if selected else "")
+
 
 class ProfileHeaderTests(unittest.TestCase):
     def render(self, profile, role="staff"):
@@ -53,20 +59,16 @@ class ProfileHeaderTests(unittest.TestCase):
             content = server.base_page("Thông tin cá nhân", "", session, active_path="/profile")
         return user_profiles.enhance_shell(content, session, profile, server.icon)
 
-    def test_full_name_role_and_avatar_are_in_one_native_profile_link(self):
+    def test_full_name_role_avatar_and_dropdown_are_rendered(self):
         page = Page(self.render({"full_name": "Mai Nguyễn Nhật Minh"}))
-        link = page.by_class("user-profile-link")[0]
-        self.assertEqual(link["tag"], "a")
-        self.assertEqual(link["attrs"]["href"], "/profile")
-        self.assertIn("Mai Nguyễn Nhật Minh", link["text"])
-        self.assertIn("Chuyên viên Chi cục", link["text"])
-        for name in ("account-name", "account-role", "account-avatar"):
-            self.assertIn(link, page.by_class(name)[0]["parents"])
+        trigger = page.by_class("account-menu-trigger")[0]
+        self.assertEqual(trigger["tag"], "button")
+        self.assertEqual(trigger["attrs"]["aria-expanded"], "false")
+        self.assertIn("Mai Nguyễn Nhật Minh", trigger["text"])
+        self.assertIn("Chuyên viên Chi cục", trigger["text"])
         self.assertEqual(page.by_class("account-avatar")[0]["text"], "M")
-        logout = page.by_class("account-logout")[0]
-        self.assertEqual(logout["attrs"]["href"], "/logout")
-        self.assertNotIn(link, logout["parents"])
-        self.assertFalse(any(node["tag"] == "a" for node in logout["parents"]))
+        links = {node["attrs"].get("href") for node in page.by_class("account-menu-item")}
+        self.assertTrue({"/profile", "/change-password", "/activity", "/logout"}.issubset(links))
         sidebar = [node for node in page.by_class("sidebar-link") if node["attrs"]["href"] == "/profile"]
         self.assertEqual(len(sidebar), 1)
         self.assertEqual(sidebar[0]["attrs"]["aria-current"], "page")
@@ -78,12 +80,14 @@ class ProfileHeaderTests(unittest.TestCase):
                 self.assertEqual(page.by_class("account-name")[0]["text"], "staff_test")
                 self.assertEqual(page.by_class("account-avatar")[0]["text"], "S")
 
-    def test_unusual_names_are_escaped_without_regex_replacement_errors(self):
+    def test_unusual_names_are_escaped_without_becoming_markup(self):
         for name in (r"Mai \ Nguyễn", '9 <script>alert("name")</script>'):
             page = Page(self.render({"full_name": name}))
             self.assertEqual(page.by_class("account-name")[0]["text"], name)
             self.assertEqual(page.by_class("account-avatar")[0]["text"], name[0].upper())
-            self.assertEqual([node for node in page.nodes if node["tag"] == "script" and not node["attrs"].get("src")], [])
+            scripts = [node for node in page.nodes if node["tag"] == "script" and not node["attrs"].get("src")]
+            self.assertEqual(len(scripts), 1)
+            self.assertEqual(scripts[0]["attrs"].get("id"), "account-menu-script")
 
     def test_legacy_unit_header_does_not_offer_personal_profile(self):
         session = {"username": "old_unit", "role": "unit", "unit_name": "Xã cũ"}
@@ -179,13 +183,14 @@ class ProfileHTTPTests(unittest.TestCase):
             self.assertIn(username, readonly)
             self.assertIn(server.ROLE_LABELS[self.account(username)["role"]], readonly)
             self.assertIn(user_profiles.CHI_CUC_AGENCY_NAME, readonly)
+            self.assertFalse(any(node["tag"] == "input" and node["attrs"].get("name") == "phone" for node in page.nodes))
 
     def test_profile_post_cannot_change_another_user_or_account_properties(self):
         admin_before = self.profile("profile_admin")
         staff_before = self.account("profile_staff")
         result = self.staff.request("POST", "/profile?user_id=" + str(self.ids["profile_admin"]), {
             "user_id": self.ids["profile_admin"], "id": self.ids["profile_admin"],
-            "full_name": "Nhân viên kiểm thử", "department": "Phòng thử nghiệm",
+            "full_name": "Nhân viên kiểm thử", "department": user_profiles.STAFF_DEPARTMENTS[0],
             "role": "admin", "username": "forged", "agency_name": "Cơ quan giả", "unit_name": "Giả",
         })
         self.assertEqual(result[0], 303)
@@ -195,42 +200,84 @@ class ProfileHTTPTests(unittest.TestCase):
         self.assertEqual(self.profile("profile_staff")["full_name"], "Nhân viên kiểm thử")
         self.assertEqual(self.staff.request("GET", f'/users/{self.ids["profile_admin"]}/edit')[0], 403)
 
+    def test_unknown_staff_department_is_rejected_server_side(self):
+        before = self.profile("profile_staff")
+        status, _, content = self.staff.request("POST", "/profile", {
+            "full_name": "Nhân viên kiểm thử", "department": "Phòng tự nhập", "official_email": "a@example.gov.vn",
+        })
+        self.assertEqual(status, 400)
+        self.assertIn("Phòng/Bộ phận", content)
+        self.assertEqual(self.profile("profile_staff"), before)
+
     def test_admin_and_self_edits_share_the_same_profile_in_both_directions(self):
         uid = self.ids["profile_staff"]
+        dept_a, dept_b = user_profiles.STAFF_DEPARTMENTS
         self.assertEqual(self.admin.request("POST", f"/users/{uid}/edit", {
             "username": "profile_staff", "role": "staff", "active": "1", "password": "",
-            "full_name": "Nguyễn Văn A", "job_title": "Chuyên viên", "department": "Phòng A",
-            "phone": "0901234567", "official_email": "a@example.gov.vn", "unit_name": "Giả",
+            "full_name": "Nguyễn Văn A", "job_title": "Chuyên viên", "department": dept_a,
+            "official_email": "a@example.gov.vn", "unit_name": "Giả",
         })[0], 303)
         self.staff.login("profile_staff")
         page = Page(self.staff.request("GET", "/profile")[2])
         self.assertEqual(page.by_class("account-name")[0]["text"], "Nguyễn Văn A")
         self.assertEqual(page.input("full_name")["value"], "Nguyễn Văn A")
-        self.assertEqual(page.input("department")["value"], "Phòng A")
+        self.assertEqual(page.selected_option("department"), dept_a)
         self.assertEqual(self.staff.request("POST", "/profile", {
-            "full_name": "Nguyễn Văn A", "department": "Phòng B", "job_title": "Phó trưởng phòng",
-            "phone": "0907654321", "official_email": "a@example.gov.vn",
+            "full_name": "Nguyễn Văn A", "department": dept_b, "job_title": "Phó trưởng phòng",
+            "official_email": "a@example.gov.vn",
         })[0], 303)
         page = Page(self.admin.request("GET", f"/users/{uid}/edit")[2])
-        self.assertEqual(page.input("department")["value"], "Phòng B")
+        self.assertEqual(page.selected_option("department"), dept_b)
         self.assertEqual(page.input("job_title")["value"], "Phó trưởng phòng")
-        # Omitted profile fields must survive an account-only edit.
         self.assertEqual(self.admin.request("POST", f"/users/{uid}/edit", {"username":"profile_staff", "role":"staff", "active":"1"})[0], 303)
-        self.assertEqual(self.profile("profile_staff")["department"], "Phòng B")
+        self.assertEqual(self.profile("profile_staff")["department"], dept_b)
+
+    def test_phone_value_is_preserved_but_no_longer_editable(self):
+        with self.connection() as con:
+            con.execute(
+                """INSERT INTO app.user_profiles(user_id,phone,agency_name)
+                   VALUES(%s,'0901234567',%s)
+                   ON CONFLICT(user_id) DO UPDATE SET phone=EXCLUDED.phone""",
+                (self.ids["profile_staff"], user_profiles.CHI_CUC_AGENCY_NAME),
+            )
+        self.assertEqual(self.staff.request("POST", "/profile", {
+            "full_name": "Nhân viên", "department": user_profiles.STAFF_DEPARTMENTS[0], "official_email": "nv@example.gov.vn",
+        })[0], 303)
+        self.assertEqual(self.profile("profile_staff")["phone"], "0901234567")
+        self.assertNotIn('name="phone"', self.staff.request("GET", "/profile")[2])
 
     def test_account_creation_and_profile_validation_are_atomic(self):
-        data = {"username":"new_staff", "password":"Profile-test-2026", "role":"staff", "full_name":"Mai Nguyễn Nhật Minh", "official_email":"bad-email"}
+        data = {"username":"new_staff", "password":"Profile-test-2026", "role":"staff", "full_name":"Mai Nguyễn Nhật Minh", "department":user_profiles.STAFF_DEPARTMENTS[0], "official_email":"bad-email"}
         self.assertEqual(self.admin.request("POST", "/users/new", data)[0], 400)
         with self.connection() as con:
             self.assertEqual(con.execute("SELECT COUNT(*) FROM app.users WHERE username='new_staff'").fetchone()[0], 0)
         self.assertEqual(self.admin.request("POST", "/users/new", {**data, "official_email":"minh@example.gov.vn"})[0], 303)
         client = Client(self.http.server_address[1]).login("new_staff")
         self.assertEqual(Page(client.request("GET", "/profile")[2]).by_class("account-name")[0]["text"], data["full_name"])
+        self.assertEqual(self.admin.request("POST", "/users/new", {
+            "username":"missing_department", "password":"Profile-test-2026", "role":"staff", "full_name":"Thiếu phòng"
+        })[0], 400)
+        with self.connection() as con:
+            self.assertEqual(con.execute("SELECT COUNT(*) FROM app.users WHERE username='missing_department'").fetchone()[0], 0)
         before = self.account("profile_staff")
         self.assertEqual(self.admin.request("POST", f'/users/{self.ids["profile_staff"]}/edit', {
-            "username":"must_rollback", "role":"staff", "active":"1", "full_name":"A", "official_email":"invalid",
+            "username":"must_rollback", "role":"staff", "active":"1", "full_name":"A", "department":user_profiles.STAFF_DEPARTMENTS[0], "official_email":"invalid",
         })[0], 400)
         self.assertEqual(self.account("profile_staff"), before)
+
+    def test_activity_page_is_scoped_for_staff_and_admin_can_see_all(self):
+        self.assertEqual(self.staff.request("POST", "/profile", {
+            "full_name": "Nhân viên A", "department": user_profiles.STAFF_DEPARTMENTS[0], "official_email": "a@example.gov.vn",
+        })[0], 303)
+        status, _, content = self.staff.request("GET", "/activity")
+        self.assertEqual(status, 200)
+        self.assertIn("Cập nhật thông tin cá nhân", content)
+        self.assertIn("Nhân viên A", content)
+        self.assertNotIn("profile_admin", content)
+        status, _, admin_content = self.admin.request("GET", "/activity")
+        self.assertEqual(status, 200)
+        self.assertIn("Nhân viên A", admin_content)
+        self.assertIn("Tất cả người dùng", admin_content)
 
     def test_csrf_logout_and_legacy_unit_policy_remain_enforced(self):
         before = self.profile("profile_staff")
@@ -248,9 +295,10 @@ class ProfileHTTPTests(unittest.TestCase):
         self.assertEqual(self.staff.request("GET", "/logout")[0], 303)
         self.assertEqual(self.staff.request("GET", "/profile")[0], 303)
 
-    def test_existing_business_routes_keep_working_with_profile_header(self):
+    def test_existing_business_routes_keep_working_with_account_menu(self):
         for path in ("/dashboard", "/records", "/import-excel", "/ocop", "/ocop/import"):
             with self.subTest(path=path):
                 status, _, content = self.staff.request("GET", path)
                 self.assertEqual(status, 200)
-                self.assertEqual(Page(content).by_class("user-profile-link")[0]["attrs"]["href"], "/profile")
+                self.assertEqual(len(Page(content).by_class("account-menu-trigger")), 1)
+                self.assertIn('href="/activity"', content)
