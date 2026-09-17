@@ -399,7 +399,8 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
             self.assertIn("Sản phẩm TODAY", html)
             self.assertIn("tel:0909000000", html)
 
-            with patch.object(server, "ocop_available", return_value=True):
+            with patch.object(server, "ocop_available", return_value=True), \
+                    patch.object(server, "db_conn", return_value=con):
                 dashboard = server.landing_page(session)
             self.assertIn("SẮP HẾT HẠN ≤ 3 THÁNG", dashboard)
             self.assertIn(">5<", dashboard)
