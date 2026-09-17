@@ -94,6 +94,14 @@ class ProfileHeaderTests(unittest.TestCase):
     def test_common_dashboard_has_two_column_desktop_and_one_column_mobile_grids(self):
         css = (Path(server.__file__).parent / "assets" / "app.css").read_text(encoding="utf-8")
         self.assertIn(
+            ".dashboard-module-grid{display:grid;grid-template-columns:minmax(0,1fr)",
+            css,
+        )
+        self.assertIn(
+            "@media(min-width:1500px){.dashboard-module-grid{grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr)",
+            css,
+        )
+        self.assertIn(
             ".dashboard-stat-grid,.dashboard-summary-grid{display:grid;grid-template-columns:repeat(2",
             css,
         )
@@ -398,6 +406,14 @@ class ProfileHTTPTests(unittest.TestCase):
         self.assertIn('aria-labelledby="ocop-dashboard-title"', content)
         self.assertIn("dashboard-stat-grid", content)
         self.assertIn("dashboard-summary-grid", content)
+        self.assertIn('class="dashboard-module-grid"', content)
+        self.assertNotIn("PHÂN HỆ 01", content)
+        self.assertNotIn("PHÂN HỆ 02", content)
+        self.assertIn("Tính đến ngày", content)
+        self.assertNotIn("Cập nhật ngày", content)
+        self.assertNotIn("breakdown lấy từ dữ liệu đã tổng hợp", content)
+        self.assertNotIn("recognition hiện hành và phạm vi địa bàn đang chọn", content)
+        self.assertNotIn('class="dashboard-stat-card warning"', content)
         self.assertIn("Xem chi tiết Diêm nghiệp", content)
         self.assertIn("Xem chi tiết OCOP", content)
         self.assertIn("Đặt lại bộ lọc", content)

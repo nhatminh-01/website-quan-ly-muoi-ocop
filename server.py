@@ -904,7 +904,7 @@ def landing_page(session, query=""):
             ),
             _dashboard_metric_card(
                 "CÒN LẠI", current_metrics["remaining"], "tấn", "stock",
-                change=changes["remaining"]["total"], warning=True,
+                change=changes["remaining"]["total"],
             ),
         ])
         salt_people = (
@@ -957,18 +957,20 @@ def landing_page(session, query=""):
         <div class="field"><label for="dashboard-week">Kỳ Diêm nghiệp</label><select id="dashboard-week" name="week">{week_options}</select></div>
         <button class="btn primary" type="submit">Áp dụng</button><a class="btn" href="/dashboard">Đặt lại bộ lọc</a>
       </form>
-      <section class="dashboard-section" aria-labelledby="salt-dashboard-title">
-        <div class="dashboard-section-heading"><div><span class="eyebrow">PHÂN HỆ 01</span><h2 id="salt-dashboard-title">DIÊM NGHIỆP</h2></div><div class="dashboard-section-meta">Kỳ dữ liệu<br><strong>{salt_period_label}</strong></div></div>
-        <div class="dashboard-stat-grid">{salt_cards}</div>
-        {salt_people}
-        <div class="dashboard-section-footer"><span>Số liệu theo kỳ hiệu lực, breakdown lấy từ dữ liệu đã tổng hợp.</span><a class="btn small" href="{esc(salt_detail_href)}">Xem chi tiết Diêm nghiệp →</a></div>
-      </section>
-      <section class="dashboard-section" aria-labelledby="ocop-dashboard-title">
-        <div class="dashboard-section-heading"><div><span class="eyebrow">PHÂN HỆ 02</span><h2 id="ocop-dashboard-title">OCOP</h2></div><div class="dashboard-section-meta">Cập nhật ngày<br><strong>{ocop_updated}</strong></div></div>
-        <div class="dashboard-summary-grid">{ocop_cards}</div>
-        {ocop_meta}
-        <div class="dashboard-section-footer"><span>Thống kê theo recognition hiện hành và phạm vi địa bàn đang chọn.</span><a class="btn small" href="/ocop">Xem chi tiết OCOP →</a></div>
-      </section>
+      <div class="dashboard-module-grid">
+        <section class="dashboard-section" aria-labelledby="salt-dashboard-title">
+          <div class="dashboard-section-heading"><div><h2 id="salt-dashboard-title">DIÊM NGHIỆP</h2></div><div class="dashboard-section-meta"><strong>{salt_period_label}</strong></div></div>
+          <div class="dashboard-stat-grid">{salt_cards}</div>
+          {salt_people}
+          <div class="dashboard-section-footer"><a class="btn small" href="{esc(salt_detail_href)}">Xem chi tiết Diêm nghiệp →</a></div>
+        </section>
+        <section class="dashboard-section" aria-labelledby="ocop-dashboard-title">
+          <div class="dashboard-section-heading"><div><h2 id="ocop-dashboard-title">OCOP</h2></div><div class="dashboard-section-meta">Tính đến ngày<br><strong>{ocop_updated}</strong></div></div>
+          <div class="dashboard-summary-grid">{ocop_cards}</div>
+          {ocop_meta}
+          <div class="dashboard-section-footer"><a class="btn small" href="/ocop">Xem chi tiết OCOP →</a></div>
+        </section>
+      </div>
     </div>"""
     return base_page("Tổng quan", body, session)
 
