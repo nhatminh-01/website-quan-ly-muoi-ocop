@@ -356,10 +356,10 @@ class _Pages:
             + self.unit_field(f.get("unit", ""), True)
             + self.select("star", "Hạng sao", [("3", "3 sao"), ("4", "4 sao"), ("5", "5 sao")],
                           f.get("star", ""), empty="Tất cả hạng")
-            + self.select("remaining", "Mức thời gian còn lại", [
-                ("up_to_30", "≤ 30 ngày"),
-                ("31_60", "31–60 ngày"),
-                ("over_60", "> 60 ngày đến 3 tháng"),
+            + self.select("remaining", "Tháng hết hạn", [
+                ("up_to_30", "Tháng 1"),
+                ("31_60", "Tháng 2"),
+                ("over_60", "Tháng 3"),
             ], f.get("remaining", ""), empty="Tất cả trong 3 tháng")
             + self.select("contact", "Thông tin liên hệ", [
                 ("has", "Có thông tin liên hệ"),
