@@ -11,7 +11,6 @@ import hashlib
 import io
 import json
 import re
-import unicodedata
 
 from permissions import is_chi_cuc_user
 import ocop_registry
@@ -24,10 +23,7 @@ DEFAULT_SHEET = "Loc"
 MAX_FILE_BYTES = 20 * 1024 * 1024
 
 
-def _text(value) -> str:
-    if value is None:
-        return ""
-    return " ".join(unicodedata.normalize("NFC", str(value)).split()).strip()
+_text = ocop_registry.text
 
 
 _EXCEL_ERROR_VALUES = {"#REF!", "#DIV/0!", "#VALUE!", "#N/A", "#NAME?", "#NUM!", "#NULL!"}
@@ -45,8 +41,7 @@ def _context_text(value) -> str:
     return "" if text.upper() in _EXCEL_ERROR_VALUES else text
 
 
-def _key(value) -> str:
-    return _text(value).casefold()
+_key = ocop_registry.key
 
 
 def _json_value(value):
@@ -116,13 +111,8 @@ def _date_value(value, label: str, errors: list[str], *, required=False):
     return None
 
 
-def _stable_code(prefix: str, natural_key: str) -> str:
-    return prefix + hashlib.sha256(natural_key.encode("utf-8")).hexdigest()[:8].upper()
-
-
-def _source_key(*parts) -> str:
-    token = "\x1f".join(_key(part) for part in parts)
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+_stable_code = ocop_registry.stable_code
+_source_key = ocop_registry.source_key
 
 
 def _lookup_unit(source_name: str, unit_lookup):

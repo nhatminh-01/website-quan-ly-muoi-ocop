@@ -21,7 +21,10 @@ class ManualBrowserTests(unittest.TestCase):
                 name, value = self.staff.cookie.split("=", 1)
                 context.add_cookies([{"name":name, "value":value, "url":origin}])
                 page = context.new_page()
+                errors = []
+                page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(origin + "/ocop/manual")
+                self.assertEqual(page.request.get(origin + "/assets/ocop-manual.js").status, 200)
                 page.locator('[name="entity_name"]').fill("Hợp tác xã trình duyệt")
                 page.locator('[name="business_type"]').select_option("Hợp tác xã")
                 page.locator('[name="unit_code"]').select_option("27595")
@@ -46,6 +49,7 @@ class ManualBrowserTests(unittest.TestCase):
                 expect(page.get_by_role("status")).to_have_text("Đã lưu dữ liệu OCOP thành công.")
                 page.get_by_role("link", name="Xem sản phẩm", exact=True).click()
                 expect(page.locator(".ocop-page")).to_contain_text("4 sao")
+                self.assertEqual(errors, [])
                 context.close()
             finally:
                 browser.close()

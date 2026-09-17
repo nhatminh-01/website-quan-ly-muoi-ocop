@@ -56,6 +56,7 @@ ASSET_FILES = {
     "/assets/quoc-huy.png": ("quoc-huy.png", "image/png"),
     "/assets/app.css": ("app.css", "text/css; charset=utf-8"),
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/assets/ocop-manual.js": ("ocop-manual.js", "text/javascript; charset=utf-8"),
 }
 HOST = os.environ.get("SALT_WEB_HOST", "0.0.0.0")
 PORT = int(os.environ.get("SALT_WEB_PORT", "8080"))

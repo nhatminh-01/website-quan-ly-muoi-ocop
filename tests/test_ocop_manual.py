@@ -140,7 +140,7 @@ class ManualPostgreSQLTests(unittest.TestCase):
         self.assertEqual(svc.list_entities(self.con, self.session)["total"], 1)
         dashboard = dashboard_services.get_ocop_dashboard(self.con, self.session)
         self.assertEqual(dashboard["star_3"], 1)
-        self.assertEqual(dashboard["managed_products"], 1)
+        self.assertEqual(dashboard["total_products"], 1)
         self.assertEqual(dashboard["expiring_products"], 1)
         self.assertIn(form()["product_name"], self.staff.request("GET", "/ocop")[2])
         detail = self.staff.request("GET", f'/ocop/products/{product["id"]}')[2]
@@ -194,6 +194,30 @@ class ManualPostgreSQLTests(unittest.TestCase):
             with self.assertRaises(registry.RegistryError):
                 ocop_manual.save(self.con, self.session, values)
         self.assertEqual(self.count("app.ocop_products"), 0)
+        self.assertEqual(self.count("app.ocop_entities"), 0)
+
+    def test_ambiguous_entity_requires_choice_and_forged_append_is_rejected(self):
+        first = ocop_manual.save(self.con, self.session, form())
+        self.con.execute("INSERT INTO DM_CoSo(Ma_CoSo,TenCoSo,LoaiCoSo,DiaChi,Ma_DonViHanhChinh) VALUES('CSAMBIG',?,'Hộ','Địa chỉ khác','27595')", (form()["entity_name"],))
+        self.con.execute("""INSERT INTO app.ocop_entities(ma_co_so,created_by,created_at,updated_at)
+            VALUES('CSAMBIG',?,?,?)""", (self.session["user_id"], server.now_text(), server.now_text()))
+        self.con.commit()
+        with self.assertRaises(registry.AmbiguousEntity):
+            ocop_manual.save(self.con, self.session, form(product_name="Sản phẩm thứ hai"))
+        result = ocop_manual.save(self.con, self.session, form(product_name="Sản phẩm thứ hai", selected_entity_id=str(first["entity_id"])))
+        self.assertEqual(result["entity_id"], first["entity_id"])
+        with self.assertRaises(registry.RegistryError):
+            ocop_manual.save(self.con, self.session, next_recognition(
+                selected_entity_id=str(first["entity_id"]), append_product_id=str(result["product_id"])))
+        self.assertEqual(self.count("app.ocop_recognitions"), 2)
+
+    def test_stale_or_forged_role_is_checked_against_database(self):
+        with self.assertRaises(svc.OcopError):
+            ocop_manual.save(self.con, {**self.session, "role":"admin"}, form())
+        self.con.execute("UPDATE app.users SET active=FALSE WHERE id=?", (self.session["user_id"],))
+        self.con.commit()
+        with self.assertRaises(svc.OcopError):
+            ocop_manual.save(self.con, self.session, form())
         self.assertEqual(self.count("app.ocop_entities"), 0)
 
     def test_multiple_recognitions_choose_latest_and_keep_older_history(self):
