@@ -12,6 +12,13 @@ RECOGNITION_FIELDS = ("star_rank", "evaluation_type", "recognition_year", "recog
 EVALUATIONS = (("new", "Công nhận mới"), ("re_evaluation", "Đánh giá lại"), ("upgrade", "Nâng hạng"))
 
 
+MANUAL_PAGE_STYLE = '''<style id="ocop-manual-entry-style">
+.manual-import-excel{background:#2563eb;border-color:#2563eb;color:#fff}
+.manual-import-excel:hover{background:#1d4ed8;border-color:#1d4ed8;color:#fff;filter:none}
+@media(max-width:760px){.manual-page .page-head{align-items:stretch;flex-direction:column}.manual-page .page-head>.actions{width:100%}.manual-page .page-head>.actions .btn{width:100%}}
+</style>'''
+
+
 def form_recognitions(data):
     indices = sorted({int(match[1]) for name in data
                       if (match := re.fullmatch(r"recognition_(\d{1,2})_(?:" + "|".join(RECOGNITION_FIELDS) + ")", name))})
@@ -85,21 +92,6 @@ def recognition_fields(index, row=None):
             f'<div class="manual-grid">{fields}</div><button type="button" class="btn small" data-remove-recognition>Xóa lần này</button></fieldset>')
 
 
-def _entry_method_cards():
-    return '''<div class="manual-grid" aria-label="Phương thức nhập dữ liệu OCOP">
-      <section class="card">
-        <h2>Import file Excel</h2>
-        <p class="muted">Tải file Excel dữ liệu OCOP lên hệ thống, kiểm tra trước và xác nhận import.</p>
-        <div class="actions"><a class="btn" href="/ocop/import">Import file Excel</a></div>
-      </section>
-      <section class="card">
-        <h2>Nhập dữ liệu trực tiếp</h2>
-        <p class="muted">Nhập trực tiếp thông tin chủ thể, sản phẩm và lịch sử công nhận OCOP.</p>
-        <div class="actions"><a class="btn primary" href="#ocop-manual-form">Nhập dữ liệu</a></div>
-      </section>
-    </div>'''
-
-
 def page(con, session, csrf, query="", data=None, error=None):
     registry.require_internal(con, session)
     query = parse_qs(query)
@@ -107,7 +99,7 @@ def page(con, session, csrf, query="", data=None, error=None):
     product_id = (query.get("product_id") or [""])[0] if not data else data.get("append_product_id", "")
     if (query.get("saved") or [""])[0] and not data:
         product = svc.get_product(con, session, (query["saved"])[0])
-        return f'''<div class="container ocop-page manual-page"><h1>NHẬP DỮ LIỆU OCOP</h1>
+        return f'''{MANUAL_PAGE_STYLE}<div class="container ocop-page manual-page"><div class="page-head"><div><div class="ocop-breadcrumb"><a href="/ocop">OCOP</a> / Nhập dữ liệu</div><h1>NHẬP DỮ LIỆU OCOP</h1></div><div class="actions"><a class="btn manual-import-excel" href="/ocop/import">Nhập bằng file Excel</a></div></div>
           <div class="notice ok" role="status">Đã lưu dữ liệu OCOP thành công.</div>
           <div class="card"><h2>{esc(product['name'])}</h2><div class="actions">
           <a class="btn primary" href="/ocop/products/{product['id']}">Xem sản phẩm</a>
@@ -155,10 +147,10 @@ def page(con, session, csrf, query="", data=None, error=None):
     hidden = "".join(f'<input type="hidden" name="{field}" value="{esc(data[field])}">'
                      for field in ("append_product_id", "selected_entity_id") if data.get(field))
     save_button = '' if isinstance(error, registry.DuplicateProduct) else '<button class="btn primary" type="submit">Lưu dữ liệu</button>'
-    return f'''<div class="container ocop-page manual-page">
+    return f'''{MANUAL_PAGE_STYLE}<div class="container ocop-page manual-page">
       <div class="page-head"><div><div class="ocop-breadcrumb"><a href="/ocop">OCOP</a> / Nhập dữ liệu</div><h1>NHẬP DỮ LIỆU OCOP</h1>
-      <div class="subtitle">Chọn phương thức nhập dữ liệu vào hệ thống.</div></div></div>
-      {_entry_method_cards()}
+      <div class="subtitle">Nhập trực tiếp thông tin chủ thể, sản phẩm và lịch sử công nhận OCOP.</div></div>
+      <div class="actions"><a class="btn manual-import-excel" href="/ocop/import">Nhập bằng file Excel</a></div></div>
       {notice}<form id="ocop-manual-form" method="post" action="/ocop/manual" data-ocop-manual>
       {csrf}{hidden}
       <section class="card"><h2>1. Thông tin chủ thể</h2><div class="manual-grid">{entity_fields}</div>
