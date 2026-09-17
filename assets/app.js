@@ -5,6 +5,7 @@
   const main = document.getElementById('main-content');
   const backdrop = document.getElementById('sidebar-backdrop');
   const mobile = window.matchMedia('(max-width: 900px)');
+  const sidebarScrollKey = 'salt-sidebar-scroll';
   let collapsed = false;
   try { collapsed = localStorage.getItem('salt-sidebar-collapsed') === 'true'; } catch (_) {}
   function syncMenu() {
@@ -31,7 +32,7 @@
     }
     syncMenu();
     if (mobile.matches && document.body.classList.contains('sidebar-open')) {
-      sidebar?.querySelector('input, a, button')?.focus();
+      sidebar?.querySelector('input, a, button')?.focus({ preventScroll: true });
     }
   });
   if (backdrop) backdrop.addEventListener('click', () => { closeDrawer(); menu?.focus(); });
@@ -54,6 +55,32 @@
     });
   });
   syncMenu();
+
+  function restoreSidebarScroll() {
+    if (!sidebar) return;
+    let savedScrollTop;
+    try {
+      const savedValue = sessionStorage.getItem(sidebarScrollKey);
+      if (savedValue === null) return;
+      savedScrollTop = Number(savedValue);
+    } catch (_) { return; }
+    if (!Number.isFinite(savedScrollTop)) return;
+
+    sidebar.scrollTop = Math.max(0, Math.min(savedScrollTop, sidebar.scrollHeight - sidebar.clientHeight));
+    const activeLink = sidebar.querySelector('.sidebar-link.active');
+    if (!activeLink) return;
+    const sidebarRect = sidebar.getBoundingClientRect();
+    const activeRect = activeLink.getBoundingClientRect();
+    const activeIsVisible = activeRect.bottom > sidebarRect.top && activeRect.top < sidebarRect.bottom;
+    if (!activeIsVisible) activeLink.scrollIntoView({ block: 'nearest' });
+  }
+
+  if (sidebar) {
+    sidebar.addEventListener('scroll', () => {
+      try { sessionStorage.setItem(sidebarScrollKey, String(sidebar.scrollTop)); } catch (_) {}
+    }, { passive: true });
+    requestAnimationFrame(() => requestAnimationFrame(restoreSidebarScroll));
+  }
 
   // Weekly summary details stay in a modal so the table width does not change.
   const weeklyDialogTriggers = document.querySelectorAll('[data-weekly-dialog]');
@@ -84,198 +111,6 @@
     });
   });
 
-  // Keep the two-module home overview visually centered as one balanced block.
-  const moduleGrid = document.querySelector('.module-grid');
-  if (moduleGrid) {
-    moduleGrid.style.marginInline = 'auto';
-    const pageHead = moduleGrid.previousElementSibling;
-    if (pageHead?.classList.contains('page-head')) {
-      pageHead.style.maxWidth = '1180px';
-      pageHead.style.marginLeft = 'auto';
-      pageHead.style.marginRight = 'auto';
-    }
-  }
-
-  // Home is an operational snapshot for the two datasets, not just a pair of links.
-  function installOverviewStyles() {
-    if (document.getElementById('home-overview-styles')) return;
-    const style = document.createElement('style');
-    style.id = 'home-overview-styles';
-    style.textContent = `
-      .module-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;padding:15px 0;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-      .module-kpi{min-width:0;padding-right:8px;border-right:1px solid #edf0f3}
-      .module-kpi:last-child{border-right:0;padding-right:0}
-      .module-kpi strong{display:block;color:var(--primary);font-size:20px;line-height:1.25;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-      .module-kpi strong.compact{font-size:13px;line-height:1.4;white-space:normal;overflow-wrap:normal;word-break:normal}
-      .module-kpi span{display:block;color:var(--muted);font-size:11px;line-height:1.4;margin-top:4px}
-      .module-kpi small{display:block;color:#8792a1;font-size:10px;line-height:1.35;margin-top:3px}
-      .module-overview-note{display:flex;align-items:center;gap:7px;margin:13px 0 0;color:#738094;font-size:11px}
-      .legacy-unit-account{opacity:.74;background:#fafafa}
-      .legacy-unit-account td:nth-child(2){color:#8b5b3d;font-weight:650}
-      .chi-cuc-only-note{margin-bottom:16px}
-      @media(max-width:1150px){.module-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.module-kpi:nth-child(2){border-right:0}.module-kpi:nth-child(-n+2){padding-bottom:8px;border-bottom:1px solid #edf0f3}}
-      @media(max-width:620px){.module-kpis{grid-template-columns:1fr}.module-kpi{border-right:0!important;border-bottom:1px solid #edf0f3;padding:0 0 9px!important}.module-kpi:last-child{border-bottom:0;padding-bottom:0!important}}
-    `;
-    document.head.appendChild(style);
-  }
-
-  function renderKpis(card, items) {
-    const stats = card?.querySelector('.module-stats, .module-kpis');
-    if (!stats) return;
-    stats.className = 'module-kpis';
-    stats.replaceChildren();
-    items.forEach(item => {
-      const box = document.createElement('div');
-      box.className = 'module-kpi';
-      const strong = document.createElement('strong');
-      strong.textContent = item.value ?? '—';
-      if (item.compact) strong.classList.add('compact');
-      const label = document.createElement('span');
-      label.textContent = item.label;
-      box.append(strong, label);
-      if (item.detail) {
-        const detail = document.createElement('small');
-        detail.textContent = item.detail;
-        box.append(detail);
-      }
-      stats.append(box);
-    });
-  }
-
-  async function fetchDocument(url) {
-    const response = await fetch(url, { credentials: 'same-origin', headers: { 'X-Requested-With': 'home-overview' } });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return new DOMParser().parseFromString(await response.text(), 'text/html');
-  }
-
-  function parseVietnameseNumber(value) {
-    let token = String(value ?? '').trim().replace(/\s+/g, '');
-    if (!token || token === '-' || token === '—') return null;
-    token = token.replace(/[^0-9,.-]/g, '');
-    if (!token) return null;
-    if (token.includes('.') && token.includes(',')) {
-      token = token.lastIndexOf(',') > token.lastIndexOf('.')
-        ? token.replace(/\./g, '').replace(',', '.')
-        : token.replace(/,/g, '');
-    } else if (/^-?\d{1,3}(?:\.\d{3})+$/.test(token)) {
-      token = token.replace(/\./g, '');
-    } else if (token.includes(',')) {
-      token = token.replace(',', '.');
-    }
-    const number = Number(token);
-    return Number.isFinite(number) ? number : null;
-  }
-
-  function weeklyWarningRows(doc) {
-    const rows = [...doc.querySelectorAll('.excel-sheet tbody tr:not(.sheet-total)')];
-    const groups = [[2, 3, 4], [5, 6, 7], [8, 9, 10], [11, 12, 13], [14, 15, 16], [22, 23, 24]];
-    return rows.reduce((count, row) => {
-      const cells = [...row.querySelectorAll('td')];
-      const warning = groups.some(([totalIndex, leftIndex, rightIndex]) => {
-        const total = parseVietnameseNumber(cells[totalIndex]?.textContent);
-        if (total === null) return false;
-        const left = parseVietnameseNumber(cells[leftIndex]?.textContent) ?? 0;
-        const right = parseVietnameseNumber(cells[rightIndex]?.textContent) ?? 0;
-        return Math.abs(total - left - right) > 0.01;
-      });
-      return count + (warning ? 1 : 0);
-    }, 0);
-  }
-
-  function totalFromPagination(doc) {
-    const text = doc.querySelector('.ocop-pagination .muted')?.textContent || '';
-    const match = text.match(/\/\s*([\d.]+)/);
-    return match ? Number(match[1].replace(/\./g, '')) : 0;
-  }
-
-  function shortTimestamp(value) {
-    const text = String(value || '').trim();
-    const match = text.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}:\d{2})/);
-    return match ? `${match[3]}/${match[2]}/${match[1]} ${match[4]}` : (text || '—');
-  }
-
-  async function enhanceHomeOverview() {
-    if (!moduleGrid) return;
-    installOverviewStyles();
-    const cards = [...moduleGrid.querySelectorAll('.module-card')];
-    if (cards.length < 2) return;
-    const saltCard = cards[0];
-    const ocopCard = cards[1];
-    const saltExisting = [...saltCard.querySelectorAll('.module-stats strong')].map(el => el.textContent.trim());
-    const ocopExisting = [...ocopCard.querySelectorAll('.module-stats strong')].map(el => el.textContent.trim());
-    const saltSheets = saltExisting[0] || '0';
-    const ocopEntities = ocopExisting[0] || '0';
-    const ocopProducts = ocopExisting[1] || '0';
-
-    const saltDescription = saltCard.querySelector('p');
-    const ocopDescription = ocopCard.querySelector('p');
-    if (saltDescription) saltDescription.textContent = 'Tổng quan kỳ báo cáo mới nhất, tình trạng dữ liệu và tra cứu số liệu Diêm nghiệp tập trung tại Chi cục.';
-    if (ocopDescription) ocopDescription.textContent = 'Tổng quan danh mục sản phẩm, chủ thể, hạng sao và thời điểm cập nhật dữ liệu OCOP.';
-
-    renderKpis(saltCard, [
-      { value: '…', label: 'Kỳ báo cáo mới nhất' },
-      { value: '…', label: 'Xã/phường có dữ liệu' },
-      { value: '…', label: 'Dòng cảnh báo' },
-      { value: saltSheets, label: 'Tổng sheet đã nhập' },
-    ]);
-    renderKpis(ocopCard, [
-      { value: ocopProducts, label: 'Tổng sản phẩm' },
-      { value: ocopEntities, label: 'Tổng chủ thể' },
-      { value: '…', label: 'Phân bố hạng sao', compact: true },
-      { value: '…', label: 'Cập nhật gần nhất', compact: true },
-    ]);
-
-    try {
-      const weeklyDoc = await fetchDocument('/records?view=full');
-      const meta = {};
-      weeklyDoc.querySelectorAll('.sheet-meta>div').forEach(item => {
-        const key = item.querySelector('span')?.textContent.trim();
-        const value = item.querySelector('strong')?.textContent.trim();
-        if (key) meta[key] = value || '—';
-      });
-      renderKpis(saltCard, [
-        { value: meta['Tuần'] || '—', label: 'Kỳ báo cáo mới nhất', detail: meta['Số liệu đến ngày'] ? `Số liệu đến ${meta['Số liệu đến ngày']}` : '' },
-        { value: meta['Số xã/phường'] || '0', label: 'Xã/phường có dữ liệu' },
-        { value: String(weeklyWarningRows(weeklyDoc)), label: 'Dòng cảnh báo' },
-        { value: saltSheets, label: 'Tổng sheet đã nhập' },
-      ]);
-    } catch (_) {
-      renderKpis(saltCard, [
-        { value: '—', label: 'Kỳ báo cáo mới nhất' },
-        { value: '—', label: 'Xã/phường có dữ liệu' },
-        { value: '—', label: 'Dòng cảnh báo' },
-        { value: saltSheets, label: 'Tổng sheet đã nhập' },
-      ]);
-    }
-
-    try {
-      const [star3Doc, star4Doc, star5Doc, importDoc] = await Promise.all([
-        fetchDocument('/ocop?star=3&page_size=1'),
-        fetchDocument('/ocop?star=4&page_size=1'),
-        fetchDocument('/ocop?star=5&page_size=1'),
-        fetchDocument('/ocop/import'),
-      ]);
-      const stars = `3★: ${totalFromPagination(star3Doc)} | 4★: ${totalFromPagination(star4Doc)} | 5★: ${totalFromPagination(star5Doc)}`;
-      const historyTable = [...importDoc.querySelectorAll('table')].find(table => table.textContent.includes('Người import') && table.textContent.includes('Thời gian'));
-      const cells = historyTable ? [...(historyTable.querySelector('tbody tr')?.querySelectorAll('td') || [])] : [];
-      const latest = cells.length >= 9 ? shortTimestamp(cells[8].textContent) : '—';
-      renderKpis(ocopCard, [
-        { value: ocopProducts, label: 'Tổng sản phẩm' },
-        { value: ocopEntities, label: 'Tổng chủ thể' },
-        { value: stars, label: 'Phân bố hạng sao', compact: true },
-        { value: latest, label: 'Cập nhật gần nhất', compact: true },
-      ]);
-    } catch (_) {
-      renderKpis(ocopCard, [
-        { value: ocopProducts, label: 'Tổng sản phẩm' },
-        { value: ocopEntities, label: 'Tổng chủ thể' },
-        { value: '—', label: 'Phân bố hạng sao', compact: true },
-        { value: '—', label: 'Cập nhật gần nhất', compact: true },
-      ]);
-    }
-  }
-  enhanceHomeOverview();
-
   // Active deployment is Chi cục-only. Locality remains a data dimension for imports and filters.
   const login = document.querySelector('.login');
   if (login) {
@@ -285,7 +120,39 @@
     if (info) info.innerHTML = '<b>Tài khoản nội bộ Chi cục.</b><br>Liên hệ quản trị để được cấp tài khoản. Hệ thống không còn cấp tài khoản đăng nhập cho xã/phường.';
   }
   const sidebarFooter = document.querySelector('.sidebar-footer p');
-  if (sidebarFooter) sidebarFooter.textContent = 'Quản lý tập trung dữ liệu Diêm nghiệp và OCOP.';
+  if (sidebarFooter) sidebarFooter.textContent = 'v.1.0';
+
+  // OCOP has one "Nhập dữ liệu" menu item and it opens direct-entry immediately.
+  // Excel import remains available from the blue button inside the manual page.
+  const ocopLinks = sidebar?.querySelector('.sidebar-group[data-group="ocop"] .sidebar-group-links');
+  if (ocopLinks) {
+    const hubLink = ocopLinks.querySelector('a[href="/ocop/data-entry"]');
+    const importLink = ocopLinks.querySelector('a[href="/ocop/import"]');
+    const manualLink = ocopLinks.querySelector('a[href="/ocop/manual"]');
+    const expiryLink = ocopLinks.querySelector('a[href="/ocop/expiry-alerts"]');
+    const sourceLink = hubLink || manualLink || importLink;
+    if (sourceLink && expiryLink) {
+      const dataEntryLink = sourceLink.cloneNode(true);
+      dataEntryLink.href = '/ocop/manual';
+      dataEntryLink.title = 'Nhập dữ liệu';
+      const label = dataEntryLink.querySelector('.sidebar-label');
+      if (label) label.textContent = 'Nhập dữ liệu';
+      const active = location.pathname === '/ocop/manual' || location.pathname.startsWith('/ocop/import') || location.pathname === '/ocop/data-entry';
+      dataEntryLink.classList.toggle('active', active);
+      if (active) dataEntryLink.setAttribute('aria-current', 'page');
+      else dataEntryLink.removeAttribute('aria-current');
+      hubLink?.remove();
+      importLink?.remove();
+      manualLink?.remove();
+      ocopLinks.insertBefore(dataEntryLink, expiryLink);
+    }
+  }
+
+  // Old hub links can remain in server-rendered breadcrumbs on older routes.
+  // Point them back to the manual entry screen so the workflow stays direct.
+  document.querySelectorAll('a[href="/ocop/data-entry"]').forEach(link => {
+    link.href = '/ocop/manual';
+  });
 
   const usersHeading = [...document.querySelectorAll('.page-head h1')].find(el => el.textContent.trim() === 'Tài khoản đơn vị');
   if (usersHeading) {

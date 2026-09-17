@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlencode
 
 import ocop_import
 import ocop_services
+from ocop_pages import format_ocop_date
 from permissions import is_chi_cuc_user
 
 
@@ -179,8 +180,8 @@ def recognitions_page(session, con, query, helpers):
         rendered_rows.append(
             f"<tr><td>{_e(r['unit_name'])}</td><td><a href='/ocop/products/{r['product_id']}'>{_e(r['ten_san_pham'])}</a></td>"
             f"<td>{_e(r['entity_name'])}</td><td>{r['recognition_sequence']}</td><td>{_e(EVALUATION_LABELS.get(r['evaluation_type'], r['evaluation_type']))}</td>"
-            f"<td>{r['star_rank']} sao</td><td>{_e(r['recognition_date'] or '')}</td><td>{r['recognition_year']}</td>"
-            f"<td>{_e(r['decision_number'])}</td><td>{_e(r['decision_authority'])}</td><td>{_e(r['expiry_date'] or '')}</td>"
+            f"<td>{r['star_rank']} sao</td><td>{_e(format_ocop_date(r['recognition_date']))}</td><td>{r['recognition_year']}</td>"
+            f"<td>{_e(r['decision_number'])}</td><td>{_e(r['decision_authority'])}</td><td>{_e(format_ocop_date(r['expiry_date']))}</td>"
             f"<td>{_current_badge(r['is_current'])}</td></tr>"
         )
     table_rows = "".join(rendered_rows) or '<tr><td colspan="12" class="empty">Chưa có lịch sử công nhận OCOP.</td></tr>'
@@ -221,8 +222,8 @@ def product_history_section(con, session, product_id):
     for r in rows:
         rendered_rows.append(
             f"<tr><td>{r['recognition_sequence']}</td><td>{_e(EVALUATION_LABELS.get(r['evaluation_type'], r['evaluation_type']))}</td><td>{r['star_rank']} sao</td>"
-            f"<td>{_e(r['recognition_date'] or '')}</td><td>{r['recognition_year']}</td><td>{_e(r['decision_number'])}</td>"
-            f"<td>{_e(r['decision_authority'])}</td><td>{_e(r['expiry_date'] or '')}</td><td>{_current_badge(r['is_current'])}</td></tr>"
+            f"<td>{_e(format_ocop_date(r['recognition_date']))}</td><td>{r['recognition_year']}</td><td>{_e(r['decision_number'])}</td>"
+            f"<td>{_e(r['decision_authority'])}</td><td>{_e(format_ocop_date(r['expiry_date']))}</td><td>{_current_badge(r['is_current'])}</td></tr>"
         )
     table_rows = "".join(rendered_rows)
     return (

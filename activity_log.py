@@ -19,6 +19,10 @@ MODULE_LABELS = {
 }
 
 ACTION_LABELS = {
+    "ocop_manual_entity_create": "Tạo chủ thể OCOP trực tiếp",
+    "ocop_manual_product_create": "Tạo sản phẩm OCOP trực tiếp",
+    "ocop_manual_recognition_create": "Thêm lần công nhận OCOP",
+    "ocop_manual_update": "Bổ sung công nhận OCOP",
     "login": "Đăng nhập",
     "logout": "Đăng xuất",
     "profile_update": "Cập nhật thông tin cá nhân",

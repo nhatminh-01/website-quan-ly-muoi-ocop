@@ -1,4 +1,5 @@
 """Profile navigation, account integration and activity history through app_server."""
+from html import escape
 from html.parser import HTMLParser
 import http.client
 import os
@@ -10,6 +11,8 @@ from urllib.parse import urlencode
 
 import app_server
 import backend_db
+import ocop_import_pages
+import ocop_pages
 import server
 import user_profiles
 import test_user_profiles as profile_tests
@@ -89,10 +92,132 @@ class ProfileHeaderTests(unittest.TestCase):
             self.assertEqual(len(scripts), 1)
             self.assertEqual(scripts[0]["attrs"].get("id"), "account-menu-script")
 
+    def test_common_dashboard_has_two_column_desktop_and_one_column_mobile_grids(self):
+        css = (Path(server.__file__).parent / "assets" / "app.css").read_text(encoding="utf-8")
+        self.assertIn(
+            ".dashboard-module-grid{display:grid;grid-template-columns:minmax(0,1fr)",
+            css,
+        )
+        self.assertIn(
+            "@media(min-width:1500px){.dashboard-module-grid{grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr)",
+            css,
+        )
+        self.assertIn(
+            ".dashboard-stat-grid,.dashboard-summary-grid{display:grid;grid-template-columns:repeat(2",
+            css,
+        )
+        self.assertIn(
+            ".dashboard-stat-grid,.dashboard-summary-grid,.dashboard-people{grid-template-columns:minmax(0,1fr)",
+            css,
+        )
+
+    def test_sidebar_has_explicit_dashboard_home_link(self):
+        session = {"username": "staff_test", "role": "staff", "unit_name": "Chi cục"}
+        with patch.object(server, "ocop_available", return_value=False):
+            page = Page(server.base_page("Tổng quan", "", session))
+        home_links = [node for node in page.by_class("sidebar-link") if node["attrs"].get("href") == "/dashboard"]
+        self.assertEqual(len(home_links), 1)
+        self.assertEqual(home_links[0]["attrs"].get("title"), "Bảng giám sát")
+        self.assertEqual(home_links[0]["attrs"].get("aria-current"), "page")
+        self.assertIn("Bảng giám sát", home_links[0]["text"])
+
     def test_legacy_unit_header_does_not_offer_personal_profile(self):
         session = {"username": "old_unit", "role": "unit", "unit_name": "Xã cũ"}
         with patch.object(server, "ocop_available", return_value=False):
             self.assertNotIn('href="/profile"', server.base_page("Trang chủ", "", session))
+
+
+class OcopPresentationTests(unittest.TestCase):
+    def page(self, return_context=""):
+        page = object.__new__(ocop_pages._Pages)
+        page.escape = lambda value, quote=True: escape(str(value or ""), quote=quote)
+        page.return_context = return_context
+        page.admin = True
+        page.scope = None
+        page.session = {}
+        page.csrf = ""
+        return page
+
+    def test_missing_contact_is_rendered_once_without_duplicate_warning(self):
+        html = self.page().contact_markup({
+            "has_contact": False,
+            "representative_name": "",
+            "phone": "",
+            "email": "",
+        })
+        self.assertEqual(html.count("Chưa có thông tin liên hệ"), 1)
+        self.assertNotIn("Thiếu thông tin liên hệ", html)
+        self.assertNotIn("Chưa cập nhật", html)
+
+    def test_contact_markup_only_renders_values_that_exist(self):
+        html = self.page().contact_markup({
+            "has_contact": True,
+            "representative_name": "",
+            "phone": "0909000000",
+            "email": "",
+        })
+        self.assertIn("Số điện thoại:", html)
+        self.assertIn("0909000000", html)
+        self.assertNotIn("Người đại diện:", html)
+        self.assertNotIn("Email:", html)
+        self.assertNotIn("Chưa cập nhật", html)
+
+    def test_product_detail_uses_whitelisted_back_context_and_formats_dates(self):
+        row = {
+            "id": 123,
+            "status": "active",
+            "name": "Sản phẩm thử",
+            "ma_san_pham": "SP123",
+            "entity_name": "Chủ thể thử",
+            "ma_co_so": "CS123",
+            "facility_type": "HTX",
+            "address": "Địa chỉ thử",
+            "representative_name": "Nguyễn Văn A",
+            "phone": "0909000000",
+            "email": "a@example.com",
+            "unit_name": "Xã thử",
+            "product_group": "Thực phẩm",
+            "recognition_star": 4,
+            "latest_recognition_date": "2026-10-27",
+            "latest_expiry_date": "2027-01-31",
+            "latest_decision_number": "QD-123",
+            "latest_decision_authority": "UBND",
+            "updated_at": "2026-09-17 08:00:00",
+            "created_at": "2026-09-17 07:00:00",
+        }
+        expiry_html = self.page("expiry").detail_page("products", row)[1]
+        self.assertIn('href="/ocop/expiry-alerts"', expiry_html)
+        self.assertIn("← Cảnh báo hết hạn", expiry_html)
+        self.assertIn("27/10/2026", expiry_html)
+        self.assertIn("31/01/2027", expiry_html)
+        self.assertIn("Địa chỉ chủ thể", expiry_html)
+        self.assertIn("a@example.com", expiry_html)
+
+        catalog_html = self.page("catalog").detail_page("products", row)[1]
+        self.assertIn('href="/ocop"', catalog_html)
+        self.assertIn("← Tra cứu OCOP", catalog_html)
+        arbitrary_html = self.page("https://example.com").detail_page("products", row)[1]
+        self.assertIn('href="/ocop"', arbitrary_html)
+        self.assertNotIn('href="/ocop/expiry-alerts"', arbitrary_html)
+
+    def test_product_recognition_history_uses_the_same_date_format(self):
+        rows = [{
+            "recognition_sequence": 1,
+            "evaluation_type": "new",
+            "star_rank": 3,
+            "recognition_date": "2026-10-27",
+            "recognition_year": 2026,
+            "decision_number": "QD-123",
+            "decision_authority": "UBND",
+            "expiry_date": "2027-01-31",
+            "is_current": True,
+        }]
+        with patch.object(ocop_import_pages.ocop_import, "recognitions_for_product", return_value=(None, rows)):
+            html = ocop_import_pages.product_history_section(object(), {}, 123)
+        self.assertIn("27/10/2026", html)
+        self.assertIn("31/01/2027", html)
+        self.assertNotIn("2026-10-27", html)
+        self.assertNotIn("2027-01-31", html)
 
 
 class Client:
@@ -302,3 +427,24 @@ class ProfileHTTPTests(unittest.TestCase):
                 self.assertEqual(status, 200)
                 self.assertEqual(len(Page(content).by_class("account-menu-trigger")), 1)
                 self.assertIn('href="/activity"', content)
+
+    def test_common_dashboard_renders_both_modules_and_responsive_grids(self):
+        status, _, content = self.staff.request("GET", "/dashboard")
+        self.assertEqual(status, 200)
+        self.assertIn("Bảng giám sát", content)
+        self.assertIn('aria-labelledby="salt-dashboard-title"', content)
+        self.assertIn('aria-labelledby="ocop-dashboard-title"', content)
+        self.assertIn("dashboard-stat-grid", content)
+        self.assertIn("dashboard-summary-grid", content)
+        self.assertIn('class="dashboard-module-grid"', content)
+        self.assertNotIn("PHÂN HỆ 01", content)
+        self.assertNotIn("PHÂN HỆ 02", content)
+        self.assertIn("Tính đến ngày", content)
+        self.assertNotIn("Cập nhật ngày", content)
+        self.assertNotIn("breakdown lấy từ dữ liệu đã tổng hợp", content)
+        self.assertNotIn("recognition hiện hành và phạm vi địa bàn đang chọn", content)
+        self.assertNotIn('class="dashboard-stat-card warning"', content)
+        self.assertIn("Xem chi tiết Diêm nghiệp", content)
+        self.assertIn("Xem chi tiết OCOP", content)
+        self.assertIn("Đặt lại bộ lọc", content)
+        self.assertIn("dashboard-v1", content)

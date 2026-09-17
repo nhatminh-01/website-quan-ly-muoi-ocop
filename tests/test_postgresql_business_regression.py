@@ -3,12 +3,16 @@ from __future__ import annotations
 
 import hashlib
 import os
+from datetime import date, timedelta
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 from uuid import uuid4
 
 import backend_db
 import admin_units
+import dashboard_services
+import ocop_pages
 import ocop_services
 import permissions
 import server
@@ -27,6 +31,8 @@ MIGRATIONS = (
     "010_weekly_salt_imports.sql",
     "011_weekly_foundation.sql",
     "012_admin_units.sql",
+    "013_ocop_legacy_import.sql",
+    "020_ocop_expiry_indexes.sql",
 )
 
 
@@ -36,12 +42,14 @@ def _sha(label: str) -> str:
 
 def weekly_preview(*, week: str, report_date: str, sha_label: str,
                    area_land: float, area_tarp: float,
-                   harvest_land: float, harvest_tarp: float):
+                   harvest_land: float, harvest_tarp: float,
+                   unit_name: str = "Xã Tân Nhựt",
+                   unit_code: str = "27595"):
     canonical = {
         "week_code": week,
         "report_date": report_date,
-        "unit_name": "Xã Tân Nhựt",
-        "ma_don_vi_hanh_chinh": "27595",
+        "unit_name": unit_name,
+        "ma_don_vi_hanh_chinh": unit_code,
         "phuong_phap_sx": "Truyền thống",
         "gia_ban_binh_quan": None,
         "dien_tich": area_land + area_tarp,
@@ -74,7 +82,7 @@ def weekly_preview(*, week: str, report_date: str, sha_label: str,
         "report_date": report_date,
         "rows": [{
             "excel_row": 5,
-            "unit_name_raw": "Xã Tân Nhựt",
+            "unit_name_raw": unit_name,
             "status": "valid",
             "errors": [],
             "warnings": [],
@@ -101,6 +109,43 @@ class PostgreSQLCompatibilityContractTests(unittest.TestCase):
         self.assertTrue(permissions.is_chi_cuc_user({"role": "staff"}))
         self.assertFalse(permissions.can_manage_users({"role": "staff"}))
         self.assertFalse(permissions.is_chi_cuc_user({"role": "unit"}))
+
+
+class OcopExpiryClassificationTests(unittest.TestCase):
+    def test_expiry_categories_use_calendar_month_boundaries(self):
+        today = date(2026, 1, 31)
+        boundary = ocop_services.add_calendar_months(today, 3)
+        cases = (
+            (today, "expiring"),
+            (ocop_services.add_calendar_months(today, 1), "expiring"),
+            (boundary, "expiring"),
+            (boundary + timedelta(days=1), "valid"),
+            (today - timedelta(days=1), "expired"),
+            (None, "missing_expiry"),
+        )
+        for expiry, expected in cases:
+            with self.subTest(expiry=expiry):
+                self.assertEqual(
+                    ocop_services.classify_ocop_expiry(expiry, today), expected
+                )
+
+    def test_expiry_filters_use_cumulative_calendar_months(self):
+        expected_intervals = {
+            "up_to_1_month": "INTERVAL '1 month'",
+            "up_to_2_months": "INTERVAL '2 months'",
+            "up_to_3_months": "INTERVAL '3 months'",
+        }
+        with patch.object(ocop_services, "get_scope", return_value=None):
+            for filter_value, interval in expected_intervals.items():
+                with self.subTest(filter_value=filter_value):
+                    sql, args, unit = ocop_services._ocop_expiry_query(
+                        object(), None, "expiring", {"remaining": filter_value}
+                    )
+                    self.assertEqual(args, ["expiring"])
+                    self.assertEqual(unit, "")
+                    self.assertIn("expiry.expiry_date >= CURRENT_DATE", sql)
+                    self.assertIn("expiry.expiry_date <= CURRENT_DATE + " + interval, sql)
+                    self.assertNotIn("BETWEEN", sql)
 
 
 @unittest.skipUnless(os.getenv("OCOP_TEST_PG_DSN"),
@@ -162,6 +207,61 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
         con.commit()
         return user_id
 
+    def add_ocop_recognition(self, con, product_id, token, recognition_date,
+                             expiry_date, star, sequence, current):
+        con.execute(
+            """INSERT INTO ocop_recognitions(
+                product_id,source_key,recognition_sequence,evaluation_type,
+                star_rank,recognition_date,recognition_year,decision_number,
+                decision_authority,expiry_date,is_current)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (product_id, f"expiry-{token}-{sequence}", sequence,
+             "new" if sequence == 1 else "re_evaluation", star,
+             recognition_date, recognition_date.year, f"QD-{token}-{sequence}",
+             "UBND TPHCM", expiry_date, current),
+        )
+
+    def add_ocop_product(self, con, owner_id, token, unit_code, expiry_date,
+                         star=3, representative="Nguyễn Văn A",
+                         phone="0909000000", email="test@example.com",
+                         create_entity=True):
+        facility_code = f"CS{token}"
+        product_code = f"SP{token}"
+        now = "2026-09-11 00:00:00"
+        con.execute(
+            "INSERT INTO DM_SanPham(Ma_SanPham,TenSanPham,NhomSanPham,DonViTinh,TrangThai) "
+            "VALUES(?,?,?,?,TRUE)",
+            (product_code, f"Sản phẩm {token}", "Thực phẩm", ""),
+        )
+        con.execute(
+            "INSERT INTO DM_CoSo(Ma_CoSo,TenCoSo,LoaiCoSo,DiaChi,Ma_DonViHanhChinh) "
+            "VALUES(?,?,?,?,?)",
+            (facility_code, f"Chủ thể {token}", "HTX", f"Địa chỉ {token}", unit_code),
+        )
+        if create_entity:
+            con.execute(
+                """INSERT INTO ocop_entities(
+                    ma_co_so,representative_name,phone,email,tax_code,website,
+                    description,created_by,created_at,updated_at)
+                    VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (facility_code, representative, phone, email, "", "", "",
+                 owner_id, now, now),
+            )
+        product_id = con.execute(
+            """INSERT INTO ocop_products(
+                ma_san_pham,ma_co_so,ma_don_vi_hanh_chinh,ten_san_pham,
+                product_group,description,current_star,status,created_by,
+                created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,'active',?,?,?)""",
+            (product_code, facility_code, unit_code, f"Sản phẩm {token}",
+             "Thực phẩm", "", star, owner_id, now, now),
+        ).lastrowid
+        today = con.execute("SELECT CURRENT_DATE AS today").fetchone()["today"]
+        self.add_ocop_recognition(
+            con, product_id, token, today, expiry_date, star, 1, True
+        )
+        return product_id
+
     def test_admin_units_tan_nhut_alias_and_backend_permissions(self):
         con = self.compat()
         try:
@@ -201,6 +301,271 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
             self.assertEqual(title, "Phân địa bàn OCOP")
             self.assertIn("ocop_unit", html)
             self.assertIn("Xã Tân Nhựt", html)
+        finally:
+            con.close()
+
+    def test_ocop_expiry_summary_uses_current_recognition_and_keeps_contacts_missing(self):
+        con = self.compat()
+        try:
+            admin_id = self.create_user(con, "expiry_admin", "admin")
+            session = {"user_id": admin_id, "username": "expiry_admin", "role": "admin",
+                       "unit_name": "Chi cục", "csrf": "test-csrf"}
+            today = con.execute("SELECT CURRENT_DATE AS today").fetchone()["today"]
+            boundary = ocop_services.add_calendar_months(today, 3)
+            product_ids = {}
+            product_ids["today"] = self.add_ocop_product(
+                con, admin_id, "TODAY", "27595", today, 3,
+                representative="Nguyễn Văn A", phone="", email=""
+            )
+            product_ids["month"] = self.add_ocop_product(
+                con, admin_id, "MONTH", "27595", today + timedelta(days=30), 4,
+                representative="", email=""
+            )
+            product_ids["boundary"] = self.add_ocop_product(
+                con, admin_id, "BOUNDARY", "27595", boundary, 5,
+                representative="   ", phone="", email=""
+            )
+            product_ids["middle"] = self.add_ocop_product(
+                con, admin_id, "MIDDLE", "27595", today + timedelta(days=45), 4,
+                representative="", phone="", email="middle@example.com"
+            )
+            product_ids["valid"] = self.add_ocop_product(
+                con, admin_id, "VALID", "27595", boundary + timedelta(days=1), 3,
+                representative="", phone="", email="test@example.com"
+            )
+            product_ids["expired"] = self.add_ocop_product(
+                con, admin_id, "EXPIRED", "27595", today - timedelta(days=1), 4,
+                representative="", phone="", email=""
+            )
+            product_ids["missing"] = self.add_ocop_product(
+                con, admin_id, "MISSING", "27595", None, 5,
+                representative="", phone="", email=""
+            )
+            product_ids["renewed"] = self.add_ocop_product(
+                con, admin_id, "RENEWED", "27595", today - timedelta(days=1), 3,
+                representative="", email=""
+            )
+            product_ids["no_entity"] = self.add_ocop_product(
+                con, admin_id, "NOENTITY", "27595", today, 3, create_entity=False
+            )
+            self.add_ocop_recognition(
+                con, product_ids["renewed"], "RENEWED-NEW", today,
+                today + timedelta(days=30), 5, 2, False
+            )
+            con.execute(
+                "UPDATE ocop_recognitions SET is_current=FALSE "
+                "WHERE product_id=? AND recognition_sequence=1",
+                (product_ids["renewed"],),
+            )
+            con.execute(
+                "UPDATE ocop_recognitions SET is_current=TRUE "
+                "WHERE product_id=? AND source_key=?",
+                (product_ids["renewed"], "expiry-RENEWED-NEW-2"),
+            )
+            con.commit()
+
+            summary = ocop_services.get_ocop_expiry_summary(con, session)
+            self.assertEqual(summary, {
+                "total_products": 9,
+                "valid_products": 1,
+                "expiring_products": 6,
+                "expired_products": 1,
+                "missing_expiry": 1,
+                "star_3": 3,
+                "star_4": 3,
+                "star_5": 3,
+                "total_entities": 8,
+            })
+            self.assertEqual(
+                dashboard_services.get_ocop_dashboard(con, session), summary
+            )
+            combined = dashboard_services.get_dashboard_data(
+                con, session, salt_filters={"week": ""}, ocop_filters={}
+            )
+            self.assertIsNone(combined["salt"])
+            self.assertEqual(combined["ocop"]["managed_products"], 9)
+            self.assertEqual(combined["ocop"]["managed_entities"], 8)
+            self.assertEqual(
+                [row["expiry_date"] for row in ocop_services.get_expiring_ocop_products(con, session)],
+                sorted(row["expiry_date"] for row in ocop_services.get_expiring_ocop_products(con, session)),
+            )
+            expiring = ocop_services.get_expiring_ocop_products(con, session)
+            self.assertTrue(all(row["expiry_status"] == "expiring" for row in expiring))
+            self.assertEqual({row["product_id"] for row in expiring}, {
+                product_ids["today"], product_ids["month"],
+                product_ids["middle"], product_ids["boundary"],
+                product_ids["renewed"], product_ids["no_entity"],
+            })
+            self.assertTrue(next(row for row in expiring if row["product_id"] == product_ids["today"])["has_contact"])
+            self.assertTrue(next(row for row in expiring if row["product_id"] == product_ids["month"])["has_contact"])
+            self.assertFalse(next(row for row in expiring if row["product_id"] == product_ids["boundary"])["has_contact"])
+            self.assertFalse(next(row for row in expiring if row["product_id"] == product_ids["no_entity"])["has_contact"])
+            all_rows = {row["product_id"]: row for row in ocop_services.list_ocop_expiry_products(con, session)}
+            self.assertTrue(all_rows[product_ids["valid"]]["has_contact"])
+            renewed = next(row for row in expiring if row["product_id"] == product_ids["renewed"])
+            self.assertEqual(renewed["recognition_sequence"], 2)
+            self.assertEqual(renewed["days_remaining"],
+                             (renewed["expiry_date"] - today).days)
+            phone_only = next(row for row in expiring if row["product_id"] == product_ids["month"])
+            self.assertEqual(phone_only["phone"], "0909000000")
+            self.assertEqual(phone_only["email"], "")
+            self.assertEqual(phone_only["representative_name"], "")
+            self.assertTrue(phone_only["has_contact"])
+            missing_representative = next(row for row in expiring if row["product_id"] == product_ids["renewed"])
+            self.assertEqual(missing_representative["representative_name"], "")
+            has_contact = ocop_services.get_expiring_ocop_products(
+                con, session, {"contact": "has"}
+            )
+            no_contact = ocop_services.get_expiring_ocop_products(
+                con, session, {"contact": "none"}
+            )
+            self.assertEqual({row["product_id"] for row in has_contact}, {
+                product_ids["today"], product_ids["month"],
+                product_ids["middle"], product_ids["renewed"],
+            })
+            self.assertEqual({row["product_id"] for row in no_contact}, {
+                product_ids["boundary"], product_ids["no_entity"],
+            })
+            self.assertEqual(ocop_services.get_expiring_ocop_count(con, session), 6)
+            self.assertEqual(ocop_services.get_expiring_ocop_count(con, session, {"contact": "has"}), 4)
+            self.assertEqual(ocop_services.get_expiring_ocop_count(con, session, {"contact": "none"}), 2)
+            self.assertEqual(
+                {row["product_id"] for row in ocop_services.get_expiring_ocop_products(
+                    con, session, {"star": "4"}
+                )},
+                {product_ids["month"], product_ids["middle"]},
+            )
+            self.assertEqual(
+                {row["product_id"] for row in ocop_services.get_expiring_ocop_products(
+                    con, session, {"q": "TODAY"}
+                )},
+                {product_ids["today"]},
+            )
+            self.assertEqual(
+                {row["product_id"] for row in ocop_services.get_expiring_ocop_products(
+                    con, session, {"q": "Chủ thể MONTH"}
+                )},
+                {product_ids["month"]},
+            )
+            self.assertEqual(
+                {row["product_id"] for row in ocop_services.get_expiring_ocop_products(
+                    con, session, {"remaining": "up_to_1_month"}
+                )},
+                {product_ids["today"], product_ids["month"],
+                 product_ids["renewed"], product_ids["no_entity"]},
+            )
+            self.assertEqual(
+                {row["product_id"] for row in ocop_services.get_expiring_ocop_products(
+                    con, session, {"remaining": "up_to_2_months"}
+                )},
+                {product_ids["today"], product_ids["month"], product_ids["middle"],
+                 product_ids["renewed"], product_ids["no_entity"]},
+            )
+            self.assertEqual(
+                {row["product_id"] for row in ocop_services.get_expiring_ocop_products(
+                    con, session, {"remaining": "up_to_3_months"}
+                )},
+                {product_ids["today"], product_ids["month"], product_ids["middle"],
+                 product_ids["boundary"], product_ids["renewed"], product_ids["no_entity"]},
+            )
+
+            title, html = ocop_pages.render(
+                "/ocop/expiry-alerts", "", session, con,
+                {"esc": server.esc, "csrf_input": server.csrf_input, "icon": server.icon},
+            )
+            self.assertEqual(title, "Cảnh báo hết hạn OCOP")
+            self.assertIn("Đầu mối liên hệ", html)
+            self.assertIn("Chưa có thông tin liên hệ", html)
+            self.assertEqual(html.count('<span class="ocop-contact-empty">Chưa có thông tin liên hệ</span>'), 2)
+            self.assertNotIn("Thiếu thông tin liên hệ", html)
+            self.assertNotIn("Người đại diện:</b> Chưa cập nhật", html)
+            self.assertNotIn("Số điện thoại:</b> Chưa cập nhật", html)
+            self.assertIn("Sản phẩm TODAY", html)
+            self.assertIn("tel:0909000000", html)
+            self.assertIn("mailto:middle@example.com", html)
+            self.assertIn("Thời gian còn lại", html)
+            self.assertIn("Dưới 1 tháng", html)
+            self.assertIn("Dưới 2 tháng", html)
+            self.assertIn("Dưới 3 tháng", html)
+            self.assertIn('/ocop/products/' + str(product_ids["today"]) + '?from=expiry', html)
+            self.assertIn('>Chi tiết</a>', html)
+            self.assertIn('ocop-expiry-band critical', html)
+            self.assertIn('ocop-expiry-band soon', html)
+            self.assertIn('ocop-expiry-band later', html)
+
+            detail_title, detail_html = ocop_pages.render(
+                "/ocop/products/" + str(product_ids["today"]), "from=expiry", session, con,
+                {"esc": server.esc, "csrf_input": server.csrf_input, "icon": server.icon},
+            )
+            self.assertEqual(detail_title, "Sản phẩm TODAY")
+            self.assertIn('href="/ocop/expiry-alerts"', detail_html)
+            self.assertIn("← Cảnh báo hết hạn", detail_html)
+            self.assertIn("Địa chỉ chủ thể", detail_html)
+            self.assertIn("Email", detail_html)
+            self.assertIn(today.strftime("%d/%m/%Y"), detail_html)
+
+            missing_detail_title, missing_detail_html = ocop_pages.render(
+                "/ocop/products/" + str(product_ids["no_entity"]), "from=expiry", session, con,
+                {"esc": server.esc, "csrf_input": server.csrf_input, "icon": server.icon},
+            )
+            self.assertEqual(missing_detail_title, "Sản phẩm NOENTITY")
+            self.assertIn("Địa chỉ chủ thể", missing_detail_html)
+            self.assertIn("Email", missing_detail_html)
+            self.assertIn("—", missing_detail_html)
+
+            catalog_title, catalog_html = ocop_pages.render(
+                "/ocop", "", session, con,
+                {"esc": server.esc, "csrf_input": server.csrf_input, "icon": server.icon},
+            )
+            self.assertEqual(catalog_title, "Tra cứu OCOP")
+            self.assertIn('/ocop/products/' + str(product_ids["today"]) + '?from=catalog', catalog_html)
+            self.assertIn(today.strftime("%d/%m/%Y"), catalog_html)
+
+            captured = {}
+
+            class CaptureHandler:
+                def send_html(self, content, status=200, extra_headers=None):
+                    captured["content"] = content
+                    captured["status"] = status
+
+            http_con = self.compat()
+            with patch.object(server, "db_conn", return_value=http_con):
+                handled = server.Handler.handle_ocop(
+                    CaptureHandler(), "/ocop/expiry-alerts", "", session
+                )
+            self.assertTrue(handled)
+            self.assertEqual(captured["status"], 200)
+            self.assertIn("Sản phẩm sắp hết hạn", captured["content"])
+
+            with patch.object(server, "ocop_available", return_value=True), \
+                    patch.object(server, "db_conn", return_value=con):
+                dashboard = server.landing_page(session)
+            self.assertIn("SẮP HẾT HẠN ≤ 3 THÁNG", dashboard)
+            self.assertIn(">6<", dashboard)
+        finally:
+            con.close()
+
+    def test_ocop_expiry_service_respects_unit_scope(self):
+        con = self.compat()
+        try:
+            admin_id = self.create_user(con, "expiry_scope_admin", "admin")
+            unit_id = self.create_user(con, "expiry_scope_unit", "unit", "27595")
+            admin_session = {"user_id": admin_id, "role": "admin", "unit_name": "Chi cục"}
+            unit_session = {"user_id": unit_id, "role": "unit", "unit_name": "Xã Tân Nhựt"}
+            today = con.execute("SELECT CURRENT_DATE AS today").fetchone()["today"]
+            own_product = self.add_ocop_product(con, admin_id, "OWN", "27595", today)
+            other_product = self.add_ocop_product(con, admin_id, "OTHER", "27673", today)
+            con.commit()
+
+            self.assertEqual(ocop_services.get_expiring_ocop_count(con, admin_session), 2)
+            filtered_rows = ocop_services.get_expiring_ocop_products(
+                con, admin_session, {"unit": "27595"}
+            )
+            self.assertEqual([row["product_id"] for row in filtered_rows], [own_product])
+            scoped_rows = ocop_services.get_expiring_ocop_products(con, unit_session)
+            self.assertEqual([row["product_id"] for row in scoped_rows], [own_product])
+            self.assertNotIn(other_product, {row["product_id"] for row in scoped_rows})
+            self.assertEqual(ocop_services.get_ocop_expiry_summary(con, unit_session)["total_entities"], 1)
         finally:
             con.close()
 
@@ -247,7 +612,7 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
 
             w35 = weekly_preview(
                 week="2026-W35", report_date="2026-08-28", sha_label="w35",
-                area_land=85, area_tarp=15, harvest_land=720, harvest_tarp=280,
+                area_land=95, area_tarp=15, harvest_land=800, harvest_tarp=300,
             )
             commit_weekly_preview(con, session, w35, "update", "2026-09-11 08:15:00")
             con.commit()
@@ -259,6 +624,67 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
             self.assertEqual(len(dashboard["previous_rows"]), 1)
             self.assertEqual(float(dashboard["rows"][0]["sold_total"]), 15.0)
             self.assertEqual(float(dashboard["rows"][0]["remaining_total"]), 30.0)
+
+            dashboard_model = dashboard_services.get_salt_dashboard(
+                con, session, {"week": "2026-W35"}
+            )
+            self.assertEqual(dashboard_model["current_period"]["week_code"], "2026-W35")
+            self.assertEqual(dashboard_model["previous_period"]["week_code"], "2026-W34")
+            self.assertEqual(dashboard_model["scope"], {
+                "unit_code": None, "unit_name": "Tất cả đơn vị"
+            })
+            self.assertEqual(dashboard_model["current_metrics"]["area"], {
+                "total": 110.0, "land": 95.0, "tarp": 15.0
+            })
+            self.assertEqual(dashboard_model["current_metrics"]["harvest"], {
+                "total": 1100.0, "land": 800.0, "tarp": 300.0
+            })
+            self.assertEqual(dashboard_model["current_metrics"]["consumption"]["total"], 15.0)
+            self.assertEqual(dashboard_model["current_metrics"]["remaining"]["total"], 30.0)
+            self.assertEqual(dashboard_model["current_metrics"]["households"]["total"], 10.0)
+            self.assertEqual(dashboard_model["current_metrics"]["workers"]["total"], 20.0)
+            self.assertEqual(dashboard_model["changes"]["harvest"]["total"], {
+                "previous": 1000.0, "delta": 100.0, "percent_change": 10.0
+            })
+            self.assertEqual(dashboard_model["unit_breakdown"][0]["unit_name"], "Xã Tân Nhựt")
+        finally:
+            con.close()
+
+    def test_salt_dashboard_service_respects_unit_scope(self):
+        con = self.compat()
+        try:
+            admin_id = self.create_user(con, "salt_scope_admin", "admin")
+            unit_id = self.create_user(con, "salt_scope_unit", "unit", "27595")
+            import_session = {"user_id": admin_id, "role": "admin", "unit_name": "Chi cục"}
+            admin_session = {"user_id": admin_id, "role": "admin", "unit_name": "Chi cục"}
+            unit_session = {"user_id": unit_id, "role": "unit", "unit_name": "Xã Tân Nhựt"}
+
+            own = weekly_preview(
+                week="2026-W40", report_date="2026-10-02", sha_label="w40-own",
+                area_land=10, area_tarp=5, harvest_land=100, harvest_tarp=50,
+            )
+            other = weekly_preview(
+                week="2026-W40", report_date="2026-10-02", sha_label="w40-other",
+                area_land=20, area_tarp=10, harvest_land=200, harvest_tarp=100,
+                unit_name="Xã An Thới Đông", unit_code="27673",
+            )
+            commit_weekly_preview(con, import_session, own, "update", "2026-09-11 09:00:00")
+            commit_weekly_preview(con, import_session, other, "update", "2026-09-11 09:01:00")
+            con.commit()
+
+            all_rows = dashboard_services.get_salt_dashboard(
+                con, admin_session, {"week": "2026-W40"}
+            )
+            self.assertEqual(len(all_rows["rows"]), 2)
+            scoped = dashboard_services.get_salt_dashboard(
+                con, unit_session, {"week": "2026-W40"}
+            )
+            self.assertEqual(scoped["scope"]["unit_code"], "27595")
+            self.assertEqual([row["ma_don_vi_hanh_chinh"] for row in scoped["rows"]], ["27595"])
+            selected = dashboard_services.get_salt_dashboard(
+                con, admin_session, {"week": "2026-W40", "unit": "27595"}
+            )
+            self.assertEqual([row["ma_don_vi_hanh_chinh"] for row in selected["rows"]], ["27595"])
         finally:
             con.close()
 
