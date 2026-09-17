@@ -101,12 +101,21 @@ def save_profile(con, user_id, data, *, require_name=True):
 
 
 def save_account_profile(con, user_id, data):
-    """Use the account transaction and preserve fields omitted by older clients."""
-    if not any(field in data for field in PROFILE_FIELDS):
+    """Share one profile between admin account screens and self-service profile.
+
+    Newly provisioned internal accounts must include a name, and staff must pick
+    one of the configured departments. Existing account-only edits keep profile
+    fields untouched when older clients omit them.
+    """
+    existing = con.execute(
+        "SELECT 1 FROM app.user_profiles WHERE user_id=?", (user_id,)
+    ).fetchone()
+    supplied = any(field in data for field in PROFILE_FIELDS)
+    if existing and not supplied:
         return
     profile = get_profile(con, user_id)
     profile.update({field: data[field] for field in PROFILE_FIELDS if field in data})
-    return save_profile(con, user_id, profile, require_name=False)
+    return save_profile(con, user_id, profile, require_name=(existing is None))
 
 
 def _department_options(selected):
