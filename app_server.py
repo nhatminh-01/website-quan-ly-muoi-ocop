@@ -86,7 +86,6 @@ class Handler(CoreHandler):
                     content, session, self._load_profile(session), core.icon
                 )
             except Exception:
-                # Profile/menu rendering must never hide the business page.
                 logging.exception("Could not decorate page with user profile")
         return super().send_html(content, status, extra_headers)
 
@@ -140,7 +139,6 @@ class Handler(CoreHandler):
 
         session = self._profile_session()
         if path == "/logout" and session:
-            # Capture before core removes the session.
             self._write_activity(session, "auth", "logout", "Đăng xuất khỏi hệ thống", success=True)
         self._activity_response_status = None
         super().do_GET()
@@ -150,8 +148,49 @@ class Handler(CoreHandler):
             status = self._activity_response_status or 200
             self._write_activity(session, module, action, detail, success=(200 <= status < 400))
 
+    def _handle_login_with_audit(self):
+        data = core.parse_body(self)
+        username = data.get("username", "").strip()
+        password = data.get("password", "")
+        con = core.db_conn()
+        try:
+            user = core.find_user_by_username(con, username)
+            ip_address, user_agent = self._audit_meta()
+            if not user or not core.verify_password(password, user["password_hash"]):
+                if user and core.is_chi_cuc_user(user):
+                    activity_log.write_activity(
+                        con, user["id"], "login", "Đăng nhập không thành công",
+                        module="auth", success=False, ip_address=ip_address, user_agent=user_agent,
+                    )
+                    con.commit()
+                self.send_html(core.login_page("Tên đăng nhập hoặc mật khẩu không đúng."), 401)
+                return
+            if not user["active"]:
+                if core.is_chi_cuc_user(user):
+                    activity_log.write_activity(
+                        con, user["id"], "login", "Đăng nhập tài khoản không hoạt động",
+                        module="auth", success=False, ip_address=ip_address, user_agent=user_agent,
+                    )
+                    con.commit()
+                self.send_html(core.login_page("Tài khoản không hoạt động. Vui lòng liên hệ Chi cục để được xử lý."), 401)
+                return
+            sid = core.new_session(user)
+            if core.is_chi_cuc_user(user):
+                activity_log.write_activity(
+                    con, user["id"], "login", "Đăng nhập hệ thống",
+                    module="auth", success=True, ip_address=ip_address, user_agent=user_agent,
+                )
+                con.commit()
+            self.redirect("/dashboard", [("Set-Cookie", f"salt_session={sid}; Path=/; HttpOnly; SameSite=Lax")])
+        finally:
+            con.close()
+
     def do_POST(self):
         path = urlparse(self.path).path
+        if path == "/login":
+            self._handle_login_with_audit()
+            return
+
         if path == "/profile":
             _, session = self.require_session()
             if not session:
@@ -236,8 +275,6 @@ class Handler(CoreHandler):
             self._write_activity(session, module, action, detail, success=(200 <= status < 400))
 
 
-# server.main() resolves Handler from its module globals when it starts the
-# HTTP server, so replacing this single reference keeps all existing routes.
 core.Handler = Handler
 
 
