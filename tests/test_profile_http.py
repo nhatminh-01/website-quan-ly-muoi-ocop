@@ -11,6 +11,7 @@ from urllib.parse import urlencode
 
 import app_server
 import backend_db
+import ocop_import_pages
 import ocop_pages
 import server
 import user_profiles
@@ -188,6 +189,25 @@ class OcopPresentationTests(unittest.TestCase):
         arbitrary_html = self.page("https://example.com").detail_page("products", row)[1]
         self.assertIn('href="/ocop"', arbitrary_html)
         self.assertNotIn('href="/ocop/expiry-alerts"', arbitrary_html)
+
+    def test_product_recognition_history_uses_the_same_date_format(self):
+        rows = [{
+            "recognition_sequence": 1,
+            "evaluation_type": "new",
+            "star_rank": 3,
+            "recognition_date": "2026-10-27",
+            "recognition_year": 2026,
+            "decision_number": "QD-123",
+            "decision_authority": "UBND",
+            "expiry_date": "2027-01-31",
+            "is_current": True,
+        }]
+        with patch.object(ocop_import_pages.ocop_import, "recognitions_for_product", return_value=(None, rows)):
+            html = ocop_import_pages.product_history_section(object(), {}, 123)
+        self.assertIn("27/10/2026", html)
+        self.assertIn("31/01/2027", html)
+        self.assertNotIn("2026-10-27", html)
+        self.assertNotIn("2027-01-31", html)
 
 
 class Client:
