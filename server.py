@@ -39,6 +39,7 @@ import user_profiles
 import ocop_import
 import ocop_import_pages
 import ocop_pages
+import ocop_services
 from datetime import datetime, date
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -593,6 +594,7 @@ def icon(name):
         "home": '<path d="m3 10 9-7 9 7v11H3zM9 21v-8h6v8"/>',
         "download": '<path d="M12 3v12m-5-5 5 5 5-5M4 15v6h16v-6"/>',
         "location": '<path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/>',
+        "alert": '<path d="m12 3 9 17H3L12 3Z"/><path d="M12 9v4m0 3h.01"/>',
     }
     return f'<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">{paths.get(name, paths["file"])}</svg>'
 
@@ -649,7 +651,8 @@ def base_page(title, body, session=None, active_path=None):
         # labels while retaining the brand link as a quick route home.
         nav_groups = [("DIÊM NGHIỆP", salt_items)]
         if ocop_available():
-            ocop_items = [("/ocop", "table", "Tra cứu / Xuất báo cáo")]
+            ocop_items = [("/ocop", "table", "Tra cứu / Xuất báo cáo"),
+                          ("/ocop/expiry-alerts", "alert", "Cảnh báo hết hạn")]
             if is_chi_cuc_user(session):
                 ocop_items.append(("/ocop/import", "download", "Import dữ liệu OCOP"))
             nav_groups.append(("OCOP", ocop_items))
@@ -688,7 +691,7 @@ def base_page(title, body, session=None, active_path=None):
         <button type="button" id="sidebar-backdrop" class="sidebar-backdrop" aria-label="Đóng menu" tabindex="-1"></button>
         """
         body = f'<main class="app-main" id="main-content">{body}</main>'
-    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260916-profile-header"><script src="/assets/app.js?v=20260916-sidebar-scroll-v2" defer></script></head><body>{top}{body}</body></html>"""
+    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260917-ocop-expiry-alerts"><script src="/assets/app.js?v=20260916-sidebar-scroll-v2" defer></script></head><body>{top}{body}</body></html>"""
 
 
 # OCOP T2 is part of this single server entry point.  Keep the original page
@@ -795,6 +798,7 @@ def landing_page(session):
         salt_rows = con.execute("SELECT COUNT(*) FROM salt_weekly_records").fetchone()[0]
         ocop_entities = con.execute("SELECT COUNT(*) FROM ocop_entities WHERE archived_at IS NULL").fetchone()[0]
         ocop_products = con.execute("SELECT COUNT(*) FROM ocop_products WHERE status='active'").fetchone()[0]
+        ocop_expiry = ocop_services.get_ocop_expiry_summary(con, session)
     finally:
         con.close()
     salt_import_action = '<a class="btn primary" href="/import-excel">Import báo cáo</a>' if is_chi_cuc_user(session) else ''
@@ -814,6 +818,7 @@ def landing_page(session):
           <div class="module-card-heading"><div><span class="eyebrow">PHÂN HỆ 02</span><h2>OCOP</h2></div>{icon('table')}</div>
           <p>Tra cứu sản phẩm theo địa bàn, chủ thể, nhóm sản phẩm và hạng sao.</p>
           <div class="module-stats"><span><strong>{ocop_entities}</strong> chủ thể</span><span><strong>{ocop_products}</strong> sản phẩm</span></div>
+          <div class="module-alert"><div><span>SẮP HẾT HẠN ≤ 3 THÁNG</span><strong>{fmt_num(ocop_expiry['expiring_products'])}</strong><small>Toàn bộ sản phẩm theo recognition hiện hành</small></div><a class="btn small" href="/ocop/expiry-alerts">Xem cảnh báo</a></div>
           <div class="actions">{ocop_import_action}<a class="btn" href="/ocop">Tra cứu / Xuất báo cáo</a></div>
         </section>
       </div>

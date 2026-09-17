@@ -377,7 +377,16 @@ OCOP_EXPIRY_SELECT = """SELECT p.id AS product_id,p.ma_san_pham,p.ten_san_pham A
     CASE WHEN r.expiry_date IS NULL THEN NULL ELSE r.expiry_date - CURRENT_DATE END AS days_remaining,
     p.ma_co_so,c.TenCoSo AS entity_name,c.DiaChi AS address,
     e.id AS entity_id,e.representative_name,e.phone,e.email,
-    p.ma_don_vi_hanh_chinh,d.TenDonVi AS unit_name,
+    CASE
+        WHEN NULLIF(BTRIM(COALESCE(e.representative_name, '')), '') IS NOT NULL
+          OR NULLIF(BTRIM(COALESCE(e.phone, '')), '') IS NOT NULL
+          OR NULLIF(BTRIM(COALESCE(e.email, '')), '') IS NOT NULL
+        THEN TRUE
+        ELSE FALSE
+    END AS has_contact,
+    p.ma_don_vi_hanh_chinh,
+    p.ma_don_vi_hanh_chinh AS administrative_unit_code,
+    d.TenDonVi AS unit_name,d.TenDonVi AS administrative_unit_name,
     r.recognition_sequence,r.recognition_date,r.decision_number,r.decision_authority
     FROM ocop_products p
     JOIN ocop_recognitions r ON r.product_id=p.id AND r.is_current=TRUE
@@ -407,6 +416,33 @@ def _ocop_expiry_query(con, session, status=None, filters=None):
     if status:
         where.append("expiry.expiry_status=?")
         args.append(status)
+    query = _text(filters, "q", 200)
+    if query:
+        pattern = "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        where.append("(expiry.product_name ILIKE ? ESCAPE '\\' OR expiry.ma_san_pham ILIKE ? ESCAPE '\\' OR expiry.entity_name ILIKE ? ESCAPE '\\')")
+        args.extend([pattern] * 3)
+    star = _text(filters, "star", 5)
+    if star:
+        star = _number(star, 3, 5)
+        where.append("expiry.star_rank=?")
+        args.append(star)
+    contact = _text(filters, "contact", 20)
+    if contact not in ("", "all", "has", "none"):
+        raise OcopError("Bộ lọc thông tin liên hệ không hợp lệ.")
+    if contact == "has":
+        where.append("expiry.has_contact=TRUE")
+    elif contact == "none":
+        where.append("expiry.has_contact=FALSE")
+    remaining = _text(filters, "remaining", 20)
+    remaining_clauses = {
+        "today": "expiry.expiry_date=CURRENT_DATE",
+        "month": "expiry.expiry_date<=CURRENT_DATE + INTERVAL '1 month'",
+        "over_month": "expiry.expiry_date>CURRENT_DATE + INTERVAL '1 month'",
+    }
+    if remaining and remaining not in remaining_clauses:
+        raise OcopError("Bộ lọc thời gian còn lại không hợp lệ.")
+    if remaining:
+        where.append(remaining_clauses[remaining])
     return sql + " WHERE " + " AND ".join(where), args, unit
 
 

@@ -57,13 +57,20 @@ def _number(value, default=0):
         return default
 
 
+def _phone_href(value):
+    """Return a safe tel target while keeping the source formatting visible."""
+    normalized = re.sub(r"[\s().-]", "", str(value or "").strip())
+    return normalized if re.fullmatch(r"\+?\d{6,20}", normalized) else ""
+
+
 def _filters(query):
     if isinstance(query, dict):
         values = query
     else:
         values = parse_qs(str(query or "").lstrip("?"))
     result = {}
-    for key in ("q", "unit", "year", "status", "group", "star", "category", "page", "page_size"):
+    for key in ("q", "unit", "year", "status", "group", "star", "category",
+                "contact", "remaining", "page", "page_size"):
         value = values.get(key, "")
         if isinstance(value, (list, tuple)):
             value = value[0] if value else ""
@@ -80,13 +87,15 @@ def render(path, query, session, con, helpers):
     """
     clean_path = str(path or "").rstrip("/") or "/"
     if clean_path != "/ocop" and not re.fullmatch(
-        r"/ocop/(entities|products|applications)(?:/(new|\d+)(?:/edit)?)?|/ocop/criteria(?:/\d+)?",
+        r"/ocop/(entities|products|applications)(?:/(new|\d+)(?:/edit)?)?|/ocop/criteria(?:/\d+)?|/ocop/expiry-alerts",
         clean_path,
     ):
         return None
     page = _Pages(session, con, helpers, _filters(query))
     if clean_path == "/ocop":
         return page.catalog_page()
+    if clean_path == "/ocop/expiry-alerts":
+        return page.expiry_alerts()
     parts = clean_path.strip("/").split("/")
     kind = parts[1]
     if kind == "criteria":
@@ -296,6 +305,108 @@ class _Pages:
             + '</tr></thead><tbody>' + table_rows + '</tbody></table></div>' + pagination + '</div>'
         )
         return self.wrap("Tra cứu OCOP", "Tra cứu sản phẩm theo địa bàn, chủ thể, nhóm sản phẩm và hạng sao.", content, actions)
+
+    def contact_markup(self, row):
+        if not row.get("has_contact"):
+            return '<span class="ocop-contact-empty">Chưa có thông tin liên hệ</span>'
+        parts = []
+        representative = str(row.get("representative_name") or "").strip()
+        if representative:
+            parts.append('<span><b>Đại diện:</b> ' + self.e(representative) + '</span>')
+        phone = str(row.get("phone") or "").strip()
+        if phone:
+            phone_href = _phone_href(phone)
+            phone_html = self.e(phone)
+            if phone_href:
+                phone_html = '<a href="' + self.e("tel:" + phone_href) + '">' + phone_html + '</a>'
+            parts.append('<span><b>Điện thoại:</b> ' + phone_html + '</span>')
+        email = str(row.get("email") or "").strip()
+        if email:
+            email_href = quote(email, safe="@._+-")
+            parts.append('<span><b>Email:</b> <a href="' + self.e("mailto:" + email_href) + '">' + self.e(email) + '</a></span>')
+        return '<div class="ocop-contact">' + ''.join(parts) + '</div>'
+
+    def expiry_alerts(self):
+        rows = [dict(row) for row in svc.get_expiring_ocop_products(
+            self.con, self.session, self.filters
+        )]
+        f = self.filters
+        fields = (
+            self.input("q", "Từ khóa", f.get("q", ""),
+                       attrs='maxlength="200" placeholder="Tên sản phẩm hoặc chủ thể…"')
+            + self.unit_field(f.get("unit", ""), True)
+            + self.select("star", "Hạng sao", [("3", "3 sao"), ("4", "4 sao"), ("5", "5 sao")],
+                          f.get("star", ""), empty="Tất cả hạng")
+            + self.select("remaining", "Mức thời gian còn lại", [
+                ("today", "Hôm nay"),
+                ("month", "Trong 1 tháng tới"),
+                ("over_month", "Trên 1 tháng, trong 3 tháng"),
+            ], f.get("remaining", ""), empty="Tất cả trong 3 tháng")
+            + self.select("contact", "Thông tin liên hệ", [
+                ("has", "Có thông tin liên hệ"),
+                ("none", "Chưa có thông tin liên hệ"),
+            ], f.get("contact", ""), empty="Tất cả")
+        )
+        filter_form = (
+            '<div class="card"><form class="toolbar" action="/ocop/expiry-alerts" method="get">'
+            + fields
+            + '<button type="submit" class="btn primary">Lọc cảnh báo</button>'
+            + self.link("/ocop/expiry-alerts", "Xóa lọc")
+            + '</form></div>'
+        )
+        rendered = []
+        for row in rows:
+            product_code = self.e(row.get("ma_san_pham"))
+            product_id = self.e(row.get("product_id"))
+            product_cell = (
+                '<span class="ocop-row-id">' + product_code + '</span>'
+                '<a href="/ocop/products/' + product_id + '"><strong>'
+                + self.e(row.get("product_name")) + '</strong></a>'
+            )
+            entity_cell = (
+                '<strong>' + self.e(row.get("entity_name")) + '</strong>'
+                '<span class="ocop-contact-sub">' + self.e(row.get("ma_co_so")) + '</span>'
+                '<span class="ocop-contact-sub">' + self.e(row.get("address")) + '</span>'
+            )
+            days = row.get("days_remaining")
+            try:
+                days = int(days) if days is not None else None
+            except (TypeError, ValueError):
+                days = None
+            days_label = "—" if days is None else ("Hôm nay" if days == 0 else f"Còn {days} ngày")
+            expiry = row.get("expiry_date")
+            if isinstance(expiry, date):
+                expiry_label = expiry.strftime("%d/%m/%Y")
+            else:
+                expiry_label = str(expiry or "—")
+            rendered.append(
+                '<tr>'
+                '<td><strong>' + self.e(days_label) + '</strong></td>'
+                '<td>' + product_cell + '</td>'
+                '<td>' + self.e((str(row.get("star_rank")) + " sao") if row.get("star_rank") else "—") + '</td>'
+                '<td>' + self.e(expiry_label) + '</td>'
+                '<td>' + entity_cell + '</td>'
+                '<td>' + self.contact_markup(row) + '</td>'
+                '<td><span class="ocop-contact-sub">' + self.e(row.get("administrative_unit_code")) + '</span>'
+                '<strong>' + self.e(row.get("administrative_unit_name")) + '</strong></td>'
+                '</tr>'
+            )
+        table_rows = ''.join(rendered) or '<tr><td colspan="7" class="empty">Không có sản phẩm sắp hết hạn phù hợp.</td></tr>'
+        content = (
+            filter_form
+            + '<div class="card"><div class="ocop-detail-heading"><div><h2 class="ocop-section-heading">Sản phẩm sắp hết hạn</h2>'
+            + '<p class="muted ocop-alert-note">Chỉ tính recognition hiện hành. Thông tin liên hệ được hiển thị đúng theo dữ liệu đang có.</p></div>'
+            + '<span class="muted">' + self.e(len(rows)) + ' sản phẩm</span></div>'
+            + '<div class="table-wrap"><table class="summary-table ocop-table ocop-expiry-table"><thead><tr>'
+            + '<th>Còn hạn</th><th>Sản phẩm</th><th>Hạng</th><th>Ngày hết hạn</th><th>Chủ thể</th><th>Đầu mối liên hệ</th><th>Địa bàn</th>'
+            + '</tr></thead><tbody>' + table_rows + '</tbody></table></div></div>'
+        )
+        return self.wrap(
+            "Cảnh báo hết hạn OCOP",
+            "Sản phẩm có recognition hiện hành hết hạn trong vòng 3 tháng theo ngày hiện tại.",
+            content,
+            self.link("/ocop", "← Tra cứu OCOP"),
+        )
 
     def overview(self):
         """Deprecated workflow dashboard retained for internal compatibility."""
