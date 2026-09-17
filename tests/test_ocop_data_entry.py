@@ -1,4 +1,4 @@
-"""OCOP v1.1 data-entry hub: menu, route, permissions, links and responsive layout."""
+"""OCOP v1.1 data-entry navigation, permissions, links and responsive layout."""
 import os
 import unittest
 
@@ -24,7 +24,7 @@ def ocop_sidebar_links(content):
 
 
 class DataEntryMarkupTests(unittest.TestCase):
-    def test_choice_page_declares_two_column_desktop_and_one_column_mobile(self):
+    def test_legacy_choice_page_remains_responsive_for_compatible_links(self):
         html = app_server.ocop_data_entry_body()
         self.assertEqual(html.count('class="card ocop-entry-card"'), 2)
         self.assertIn("grid-template-columns:repeat(2,minmax(0,1fr))", html)
@@ -54,7 +54,7 @@ class DataEntryHTTPTests(unittest.TestCase):
         client.csrf = server.SESSIONS[sid]["csrf"]
         return client
 
-    def test_sidebar_has_single_data_entry_item_in_required_order(self):
+    def test_server_sidebar_keeps_single_data_entry_item_in_required_order(self):
         for client in (self.admin, self.staff):
             status, _, content = client.request("GET", "/ocop/data-entry")
             self.assertEqual(status, 200)
@@ -74,7 +74,7 @@ class DataEntryHTTPTests(unittest.TestCase):
             self.assertNotIn('href="/ocop/import" title="Import dữ liệu OCOP"', content)
             self.assertNotIn('href="/ocop/manual" title="Nhập dữ liệu trực tiếp"', content)
 
-    def test_choice_page_cards_link_to_existing_methods(self):
+    def test_legacy_choice_page_cards_still_link_to_existing_methods(self):
         status, _, content = self.staff.request("GET", "/ocop/data-entry")
         self.assertEqual(status, 200)
         self.assertIn("Import file Excel", content)
@@ -83,15 +83,21 @@ class DataEntryHTTPTests(unittest.TestCase):
         self.assertIn('href="/ocop/manual"', content)
         self.assertEqual(content.count('class="card ocop-entry-card"'), 2)
 
-    def test_import_and_manual_have_back_link_and_data_entry_stays_active(self):
-        for path in ("/ocop/import", "/ocop/manual"):
-            status, _, content = self.staff.request("GET", path)
-            self.assertEqual(status, 200)
-            self.assertIn('href="/ocop/data-entry"', content)
-            links = ocop_sidebar_links(content)
-            data_entry = next(item for item in links if item[0] == "/ocop/data-entry")
-            self.assertIn("active", data_entry[2].get("class", "").split())
-            self.assertEqual(data_entry[2].get("aria-current"), "page")
+    def test_manual_page_is_the_primary_entry_form_and_import_has_back_context(self):
+        status, _, manual = self.staff.request("GET", "/ocop/manual")
+        self.assertEqual(status, 200)
+        self.assertIn('id="ocop-manual-form"', manual)
+        self.assertIn('href="/ocop/import">Nhập bằng file Excel</a>', manual)
+        self.assertIn('class="btn manual-import-excel"', manual)
+        self.assertNotIn('aria-label="Phương thức nhập dữ liệu OCOP"', manual)
+
+        status, _, imported = self.staff.request("GET", "/ocop/import")
+        self.assertEqual(status, 200)
+        self.assertIn('href="/ocop/data-entry"', imported)
+        links = ocop_sidebar_links(imported)
+        data_entry = next(item for item in links if item[0] == "/ocop/data-entry")
+        self.assertIn("active", data_entry[2].get("class", "").split())
+        self.assertEqual(data_entry[2].get("aria-current"), "page")
 
     def test_legacy_unit_is_forbidden_from_data_entry_hub(self):
         legacy = self.legacy_client()
@@ -111,7 +117,7 @@ class DataEntryBrowserTests(unittest.TestCase):
     def setUp(self):
         fixtures.ProfileHTTPTests.setUp(self)
 
-    def test_cards_are_equal_height_on_desktop_and_stack_on_mobile(self):
+    def test_legacy_hub_cards_are_equal_height_on_desktop_and_stack_on_mobile(self):
         from playwright.sync_api import sync_playwright, expect
 
         origin = f"http://127.0.0.1:{self.http.server_address[1]}"
