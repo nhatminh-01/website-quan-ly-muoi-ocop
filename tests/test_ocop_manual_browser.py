@@ -12,7 +12,7 @@ class ManualBrowserTests(unittest.TestCase):
     setUp = fixtures.ProfileHTTPTests.setUp
 
     def test_multiple_recognitions_submit_and_responsive_layout(self):
-        from playwright.sync_api import sync_playwright, expect
+        from playwright.sync_api import sync_playwright, expect, TimeoutError as BrowserTimeout
         origin = f"http://127.0.0.1:{self.http.server_address[1]}"
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch()
@@ -43,6 +43,12 @@ class ManualBrowserTests(unittest.TestCase):
                 expect(page.locator('[data-recognition]')).to_have_count(2)
                 for width in (1366, 760, 390, 320):
                     page.set_viewport_size({"width":width, "height":900})
+                    # The existing sidebar animates main margin on breakpoint
+                    # changes. Check the settled layout, not that transition.
+                    try:
+                        page.wait_for_function("document.documentElement.scrollWidth <= innerWidth", timeout=5000)
+                    except BrowserTimeout:
+                        pass  # The assertion below reports the overflowing nodes.
                     overflow = page.evaluate("""() => [...document.querySelectorAll('body *')]
                       .filter(e => e.getBoundingClientRect().right > innerWidth + 1)
                       .map(e => ({tag:e.tagName, cls:e.className, right:e.getBoundingClientRect().right})).slice(0,12)""")
