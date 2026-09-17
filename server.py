@@ -3106,19 +3106,17 @@ class Handler(BaseHTTPRequestHandler):
             if data is None:
                 if len(parts) == 1:
                     body = admin_unit_pages.listing(con,session,query,csrf_input(session),take_flash(session))
-                elif parts == ["admin-units","new"] or (len(parts) == 3 and parts[2] == "edit"):
+                elif len(parts) == 3 and parts[2] == "edit":
                     body = admin_unit_pages.form(con,session,csrf_input(session),code)
                 else:
                     raise admin_units.CatalogError("Không tìm thấy trang.",404)
                 self.send_html(base_page("Danh mục đơn vị hành chính",body,session,active_path="/admin-units"))
             else:
-                con.execute("BEGIN")
-                if parts == ["admin-units","new"] or (len(parts) == 3 and parts[2] == "edit"):
-                    admin_units.save_unit(con,session,data,code)
-                elif len(parts) == 3 and parts[2] in ("activate","deactivate"):
-                    admin_units.set_active(con,session,code,parts[2] == "activate")
+                if len(parts) == 3 and parts[2] == "edit":
+                    con.execute("BEGIN")
+                    admin_units.update_unit(con,session,data,code)
                 else:
-                    raise admin_units.CatalogError("Thao tác không được hỗ trợ; danh mục chỉ ngưng hoạt động, không xóa.",400)
+                    raise admin_units.CatalogError("Thao tác không được hỗ trợ.",405)
                 con.commit()
                 set_flash(session,"ok","Đã lưu danh mục hành chính.")
                 self.redirect("/admin-units")
@@ -3127,7 +3125,7 @@ class Handler(BaseHTTPRequestHandler):
             status = exc.status if isinstance(exc,admin_units.CatalogError) else 409
             message = str(exc) if isinstance(exc,admin_units.CatalogError) else "Mã hoặc dữ liệu đơn vị bị trùng/không hợp lệ."
             body = f'<div class="container"><div class="notice err">{esc(message)}</div><a class="btn" href="/admin-units">Quay lại danh mục</a></div>'
-            if status in (400,409) and data is not None and (parts == ["admin-units","new"] or (len(parts) == 3 and parts[2] == "edit")):
+            if status in (400,409) and data is not None and len(parts) == 3 and parts[2] == "edit":
                 body = admin_unit_pages.form(con,session,csrf_input(session),code,message,data)
             self.send_html(base_page("Danh mục đơn vị hành chính",body,session,active_path="/admin-units"),status)
         finally:

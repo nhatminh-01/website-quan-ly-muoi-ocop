@@ -1,0 +1,169 @@
+code,name,level,parent_code
+25747,Phường Thủ Dầu Một,phuong,79
+25750,Phường Phú Lợi,phuong,79
+25760,Phường Bình Dương,phuong,79
+25768,Phường Phú An,phuong,79
+25771,Phường Chánh Hiệp,phuong,79
+25777,Xã Dầu Tiếng,xa,79
+25780,Xã Minh Thạnh,xa,79
+25792,Xã Long Hòa,xa,79
+25807,Xã Thanh An,xa,79
+25813,Phường Bến Cát,phuong,79
+25819,Xã Trừ Văn Thố,xa,79
+25822,Xã Bàu Bàng,xa,79
+25837,Phường Chánh Phú Hòa,phuong,79
+25840,Phường Long Nguyên,phuong,79
+25843,Phường Tây Nam,phuong,79
+25846,Phường Thới Hòa,phuong,79
+25849,Phường Hòa Lợi,phuong,79
+25858,Xã Phú Giáo,xa,79
+25864,Xã Phước Thành,xa,79
+25867,Xã An Long,xa,79
+25882,Xã Phước Hòa,xa,79
+25888,Phường Tân Uyên,phuong,79
+25891,Phường Tân Khánh,phuong,79
+25906,Xã Bắc Tân Uyên,xa,79
+25909,Xã Thường Tân,xa,79
+25912,Phường Vĩnh Tân,phuong,79
+25915,Phường Bình Cơ,phuong,79
+25920,Phường Tân Hiệp,phuong,79
+25942,Phường Dĩ An,phuong,79
+25945,Phường Tân Đông Hiệp,phuong,79
+25951,Phường Đông Hòa,phuong,79
+25966,Phường Lái Thiêu,phuong,79
+25969,Phường Thuận Giao,phuong,79
+25975,Phường An Phú,phuong,79
+25978,Phường Thuận An,phuong,79
+25987,Phường Bình Hòa,phuong,79
+26506,Phường Vũng Tàu,phuong,79
+26526,Phường Tam Thắng,phuong,79
+26536,Phường Rạch Dừa,phuong,79
+26542,Phường Phước Thắng,phuong,79
+26545,Xã Long Sơn,xa,79
+26560,Phường Bà Rịa,phuong,79
+26566,Phường Long Hương,phuong,79
+26572,Phường Tam Long,phuong,79
+26575,Xã Ngãi Giao,xa,79
+26584,Xã Xuân Sơn,xa,79
+26590,Xã Bình Giã,xa,79
+26596,Xã Châu Đức,xa,79
+26608,Xã Kim Long,xa,79
+26617,Xã Nghĩa Thành,xa,79
+26620,Xã Hồ Tràm,xa,79
+26632,Xã Xuyên Mộc,xa,79
+26638,Xã Bàu Lâm,xa,79
+26641,Xã Hòa Hội,xa,79
+26647,Xã Hòa Hiệp,xa,79
+26656,Xã Bình Châu,xa,79
+26659,Xã Long Điền,xa,79
+26662,Xã Long Hải,xa,79
+26680,Xã Đất Đỏ,xa,79
+26686,Xã Phước Hải,xa,79
+26704,Phường Phú Mỹ,phuong,79
+26710,Phường Tân Hải,phuong,79
+26713,Phường Tân Phước,phuong,79
+26725,Phường Tân Thành,phuong,79
+26728,Xã Châu Pha,xa,79
+26732,Đặc khu Côn Đảo,dackhu,79
+26737,Phường Tân Định,phuong,79
+26740,Phường Sài Gòn,phuong,79
+26743,Phường Bến Thành,phuong,79
+26758,Phường Cầu Ông Lãnh,phuong,79
+26767,Phường An Phú Đông,phuong,79
+26773,Phường Thới An,phuong,79
+26782,Phường Tân Thới Hiệp,phuong,79
+26785,Phường Trung Mỹ Tây,phuong,79
+26791,Phường Đông Hưng Thuận,phuong,79
+26800,Phường Linh Xuân,phuong,79
+26803,Phường Tam Bình,phuong,79
+26809,Phường Hiệp Bình,phuong,79
+26824,Phường Thủ Đức,phuong,79
+26833,Phường Long Bình,phuong,79
+26842,Phường Tăng Nhơn Phú,phuong,79
+26848,Phường Phước Long,phuong,79
+26857,Phường Long Phước,phuong,79
+26860,Phường Long Trường,phuong,79
+26876,Phường An Nhơn,phuong,79
+26878,Phường An Hội Đông,phuong,79
+26882,Phường An Hội Tây,phuong,79
+26884,Phường Gò Vấp,phuong,79
+26890,Phường Hạnh Thông,phuong,79
+26898,Phường Thông Tây Hội,phuong,79
+26905,Phường Bình Lợi Trung,phuong,79
+26911,Phường Bình Quới,phuong,79
+26929,Phường Bình Thạnh,phuong,79
+26944,Phường Gia Định,phuong,79
+26956,Phường Thạnh Mỹ Tây,phuong,79
+26968,Phường Tân Sơn Nhất,phuong,79
+26977,Phường Tân Sơn Hòa,phuong,79
+26983,Phường Bảy Hiền,phuong,79
+26995,Phường Tân Hòa,phuong,79
+27004,Phường Tân Bình,phuong,79
+27007,Phường Tân Sơn,phuong,79
+27013,Phường Tây Thạnh,phuong,79
+27019,Phường Tân Sơn Nhì,phuong,79
+27022,Phường Phú Thọ Hòa,phuong,79
+27028,Phường Phú Thạnh,phuong,79
+27031,Phường Tân Phú,phuong,79
+27043,Phường Đức Nhuận,phuong,79
+27058,Phường Cầu Kiệu,phuong,79
+27073,Phường Phú Nhuận,phuong,79
+27094,Phường An Khánh,phuong,79
+27097,Phường Bình Trưng,phuong,79
+27112,Phường Cát Lái,phuong,79
+27139,Phường Xuân Hòa,phuong,79
+27142,Phường Nhiêu Lộc,phuong,79
+27154,Phường Bàn Cờ,phuong,79
+27163,Phường Hòa Hưng,phuong,79
+27169,Phường Diên Hồng,phuong,79
+27190,Phường Vườn Lài,phuong,79
+27211,Phường Hòa Bình,phuong,79
+27226,Phường Phú Thọ,phuong,79
+27232,Phường Bình Thới,phuong,79
+27238,Phường Minh Phụng,phuong,79
+27259,Phường Xóm Chiếu,phuong,79
+27265,Phường Khánh Hội,phuong,79
+27286,Phường Vĩnh Hội,phuong,79
+27301,Phường Chợ Quán,phuong,79
+27316,Phường An Đông,phuong,79
+27343,Phường Chợ Lớn,phuong,79
+27349,Phường Phú Lâm,phuong,79
+27364,Phường Bình Phú,phuong,79
+27367,Phường Bình Tây,phuong,79
+27373,Phường Bình Tiên,phuong,79
+27418,Phường Chánh Hưng,phuong,79
+27424,Phường Bình Đông,phuong,79
+27427,Phường Phú Định,phuong,79
+27439,Phường Bình Hưng Hòa,phuong,79
+27442,Phường Bình Tân,phuong,79
+27448,Phường Bình Trị Đông,phuong,79
+27457,Phường Tân Tạo,phuong,79
+27460,Phường An Lạc,phuong,79
+27475,Phường Tân Hưng,phuong,79
+27478,Phường Tân Thuận,phuong,79
+27484,Phường Phú Thuận,phuong,79
+27487,Phường Tân Mỹ,phuong,79
+27496,Xã Tân An Hội,xa,79
+27508,Xã An Nhơn Tây,xa,79
+27511,Xã Nhuận Đức,xa,79
+27526,Xã Thái Mỹ,xa,79
+27541,Xã Phú Hòa Đông,xa,79
+27544,Xã Bình Mỹ,xa,79
+27553,Xã Củ Chi,xa,79
+27559,Xã Hóc Môn,xa,79
+27568,Xã Đông Thạnh,xa,79
+27577,Xã Xuân Thới Sơn,xa,79
+27592,Xã Bà Điểm,xa,79
+27595,Xã Tân Nhựt,xa,79
+27601,Xã Vĩnh Lộc,xa,79
+27604,Xã Tân Vĩnh Lộc,xa,79
+27610,Xã Bình Lợi,xa,79
+27619,Xã Bình Hưng,xa,79
+27628,Xã Hưng Long,xa,79
+27637,Xã Bình Chánh,xa,79
+27655,Xã Nhà Bè,xa,79
+27658,Xã Hiệp Phước,xa,79
+27664,Xã Cần Giờ,xa,79
+27667,Xã Bình Khánh,xa,79
+27673,Xã An Thới Đông,xa,79
+27676,Xã Thạnh An,xa,79

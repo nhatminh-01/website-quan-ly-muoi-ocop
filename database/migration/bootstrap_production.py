@@ -77,6 +77,11 @@ def main() -> int:
             (15, "qd5333_non_spatial"),
             (16, "app_runtime_compatibility"),
             (17, "production_indexes"),
+            (18, "repair_identity_sequences"),
+            (19, "user_profiles"),
+            (20, "activity_audit"),
+            (20, "ocop_expiry_indexes"),
+            (21, "hcmc_168_admin_units"),
         )],
     ]
 

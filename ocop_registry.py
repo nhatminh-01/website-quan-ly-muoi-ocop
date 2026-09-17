@@ -297,8 +297,8 @@ def publish(con, session, payload, *, source="excel", batch_id=None, source_row=
         entity, product = payload["entity"], payload["product"]
         unit = con.execute("""SELECT TenDonVi,TinhTrang,CapHanhChinh FROM DM_DonViHanhChinh
             WHERE Ma_DonViHanhChinh=? FOR SHARE""", (entity["unit_code"],)).fetchone()
-        if not unit or not unit[1] or unit[2] not in ("xa", "phuong") or str(entity["unit_code"]).upper().startswith("TMP"):
-            raise RegistryError("Vui lòng chọn xã/phường đang hoạt động trong danh mục.")
+        if not unit or not unit[1] or unit[2] not in ("xa", "phuong", "dackhu") or str(entity["unit_code"]).upper().startswith("TMP"):
+            raise RegistryError("Vui lòng chọn đơn vị hành chính cấp xã đang hoạt động trong danh mục.")
         if entity.get("unit_name") and entity["unit_name"] != unit[0]:
             raise RegistryError("Danh mục hành chính đã thay đổi. Vui lòng kiểm tra lại.")
         # Both transports serialize resolution and allocation within a locality.

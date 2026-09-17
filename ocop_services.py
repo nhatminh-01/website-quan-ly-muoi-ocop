@@ -154,16 +154,16 @@ def get_scope(con, session):
         return None
     unit = _one(con, """SELECT d.Ma_DonViHanhChinh AS code FROM user_admin_units m
         JOIN DM_DonViHanhChinh d ON d.Ma_DonViHanhChinh=m.ma_don_vi_hanh_chinh
-        WHERE m.user_id=? AND d.TinhTrang=1 AND d.CapHanhChinh IN ('xa','phuong')
+        WHERE m.user_id=? AND d.TinhTrang=1 AND d.CapHanhChinh IN ('xa','phuong','dackhu')
         AND upper(d.Ma_DonViHanhChinh) NOT LIKE 'TMP%'""", (user["id"],))
     if not unit:
-        raise OcopError("Tài khoản chưa được gán mã xã/phường đang hoạt động. Liên hệ quản trị viên.", 403)
+        raise OcopError("Tài khoản chưa được gán mã đơn vị hành chính cấp xã đang hoạt động. Liên hệ quản trị viên.", 403)
     return unit["code"]
 
 
 def unit_options(con, session):
     scope = get_scope(con, session)
-    sql = "SELECT Ma_DonViHanhChinh AS code,TenDonVi AS name FROM DM_DonViHanhChinh WHERE TinhTrang=1 AND CapHanhChinh IN ('xa','phuong') AND upper(Ma_DonViHanhChinh) NOT LIKE 'TMP%'"
+    sql = "SELECT Ma_DonViHanhChinh AS code,TenDonVi AS name FROM DM_DonViHanhChinh WHERE TinhTrang=1 AND CapHanhChinh IN ('xa','phuong','dackhu') AND upper(Ma_DonViHanhChinh) NOT LIKE 'TMP%'"
     args = []
     if scope is not None:
         sql += " AND Ma_DonViHanhChinh=?"
@@ -175,9 +175,9 @@ def _check_unit(con, session, code):
     scope = get_scope(con, session)
     if scope is not None and code != scope:
         raise OcopError("Không có quyền thao tác dữ liệu của xã/phường khác.", 403)
-    unit = _one(con, "SELECT Ma_DonViHanhChinh FROM DM_DonViHanhChinh WHERE Ma_DonViHanhChinh=? AND TinhTrang=1 AND CapHanhChinh IN ('xa','phuong') AND upper(Ma_DonViHanhChinh) NOT LIKE 'TMP%'", (code,))
+    unit = _one(con, "SELECT Ma_DonViHanhChinh FROM DM_DonViHanhChinh WHERE Ma_DonViHanhChinh=? AND TinhTrang=1 AND CapHanhChinh IN ('xa','phuong','dackhu') AND upper(Ma_DonViHanhChinh) NOT LIKE 'TMP%'", (code,))
     if not unit:
-        raise OcopError("Vui lòng chọn mã xã/phường đang hoạt động.")
+        raise OcopError("Vui lòng chọn mã đơn vị hành chính cấp xã đang hoạt động.")
     return code
 
 
