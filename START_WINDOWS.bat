@@ -111,5 +111,5 @@ if errorlevel 1 (
   exit /b 1
 )
 echo [5/5] Khoi dong web server tai cong %WEB_PORT%...
-"%PYTHON_EXE%" app_server.py
+"%PYTHON_EXE%" v11_server.py
 pause
