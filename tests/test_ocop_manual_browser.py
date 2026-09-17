@@ -25,6 +25,17 @@ class ManualBrowserTests(unittest.TestCase):
                 page.on("pageerror", lambda error: errors.append(str(error)))
                 page.goto(origin + "/ocop/manual")
                 self.assertEqual(page.request.get(origin + "/assets/ocop-manual.js").status, 200)
+
+                menu_labels = page.locator('.sidebar-group[data-group="ocop"] .sidebar-group-links .sidebar-label').all_text_contents()
+                self.assertEqual([text.strip() for text in menu_labels], [
+                    "Tra cứu / Xuất báo cáo",
+                    "Nhập dữ liệu",
+                    "Cảnh báo hết hạn",
+                ])
+                methods = page.locator('[aria-label="Phương thức nhập dữ liệu OCOP"]')
+                expect(methods.get_by_role("link", name="Import file Excel", exact=True)).to_have_attribute("href", "/ocop/import")
+                expect(methods.get_by_role("link", name="Nhập dữ liệu", exact=True)).to_have_attribute("href", "#ocop-manual-form")
+
                 page.locator('[name="entity_name"]').fill("Hợp tác xã trình duyệt")
                 page.locator('[name="business_type"]').select_option("Hợp tác xã")
                 page.locator('[name="unit_code"]').select_option("27595")
