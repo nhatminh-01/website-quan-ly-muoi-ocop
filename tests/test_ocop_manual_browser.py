@@ -1,0 +1,51 @@
+"""Browser interaction/layout checks on a disposable PostgreSQL fixture."""
+import os
+import unittest
+
+import test_profile_http as fixtures
+
+
+@unittest.skipUnless(os.getenv("OCOP_TEST_BROWSER") and os.getenv("OCOP_TEST_PG_DSN"), "Runs in PostgreSQL browser CI")
+class ManualBrowserTests(unittest.TestCase):
+    connection = fixtures.ProfileHTTPTests.connection
+    drop_database = fixtures.ProfileHTTPTests.drop_database
+    setUp = fixtures.ProfileHTTPTests.setUp
+
+    def test_multiple_recognitions_submit_and_responsive_layout(self):
+        from playwright.sync_api import sync_playwright, expect
+        origin = f"http://127.0.0.1:{self.http.server_address[1]}"
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            try:
+                context = browser.new_context(viewport={"width":1366, "height":900})
+                name, value = self.staff.cookie.split("=", 1)
+                context.add_cookies([{"name":name, "value":value, "url":origin}])
+                page = context.new_page()
+                page.goto(origin + "/ocop/manual")
+                page.locator('[name="entity_name"]').fill("Hợp tác xã trình duyệt")
+                page.locator('[name="business_type"]').select_option("Hợp tác xã")
+                page.locator('[name="unit_code"]').select_option("27595")
+                page.locator('[name="product_name"]').fill("Sản phẩm trình duyệt")
+                page.locator('[name="product_group"]').select_option("Gia vị")
+                page.locator('[name="recognition_0_star_rank"]').select_option("3")
+                page.locator('[name="recognition_0_evaluation_type"]').select_option("new")
+                page.locator('[name="recognition_0_recognition_year"]').fill("2025")
+                page.locator('[data-add-recognition]').click()
+                expect(page.locator('[data-recognition]')).to_have_count(2)
+                page.locator('[name="recognition_1_star_rank"]').select_option("4")
+                page.locator('[name="recognition_1_evaluation_type"]').select_option("upgrade")
+                page.locator('[name="recognition_1_recognition_year"]').fill("2026")
+                page.locator('[data-add-recognition]').click()
+                page.locator('[data-remove-recognition]').last.click()
+                expect(page.locator('[data-recognition]')).to_have_count(2)
+                for width in (1366, 760, 390, 320):
+                    page.set_viewport_size({"width":width, "height":900})
+                    self.assertTrue(page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
+                    self.assertEqual(page.locator('[name="recognition_1_star_rank"]').input_value(), "4")
+                page.get_by_role("button", name="Lưu dữ liệu", exact=True).click()
+                expect(page.get_by_role("status")).to_have_text("Đã lưu dữ liệu OCOP thành công.")
+                page.get_by_role("link", name="Xem sản phẩm", exact=True).click()
+                expect(page.locator(".ocop-page")).to_contain_text("4 sao")
+                context.close()
+            finally:
+                browser.close()

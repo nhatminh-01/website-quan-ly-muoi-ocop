@@ -39,6 +39,8 @@ import admin_unit_pages
 import user_profiles
 import ocop_import
 import ocop_import_pages
+import ocop_manual
+import ocop_registry
 import ocop_pages
 import ocop_services
 import dashboard_services
@@ -657,6 +659,7 @@ def base_page(title, body, session=None, active_path=None):
                           ("/ocop/expiry-alerts", "alert", "Cảnh báo hết hạn")]
             if is_chi_cuc_user(session):
                 ocop_items.append(("/ocop/import", "download", "Import dữ liệu OCOP"))
+                ocop_items.append(("/ocop/manual", "edit", "Nhập dữ liệu trực tiếp"))
             nav_groups.append(("OCOP", ocop_items))
         nav_groups.append(("HỆ THỐNG", system_items))
         nav = [sidebar_group(group, items, current) for group, items in nav_groups]
@@ -3160,9 +3163,23 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/ocop/access":
             active = "/users"
         helpers = {"esc": esc, "csrf_input": csrf_input, "icon": icon}
+        manual_committed = False
         try:
             if not ocop_available(con):
                 raise svc.OcopError("Phân hệ OCOP chưa được khởi tạo trên cơ sở dữ liệu này.", 503)
+            if path == "/ocop/manual":
+                ocop_registry.require_internal(con, session)
+                if data is None:
+                    body = ocop_manual.page(con, session, csrf_input(session), query)
+                    self.send_html(base_page("Nhập dữ liệu OCOP", body, session, active_path=path))
+                else:
+                    result = ocop_manual.save(con, session, data, metadata={
+                        "ip_address": self.client_address[0],
+                        "user_agent": re.sub(r"(?i)(password|token|cookie|authorization)\s*[:=]\s*\S+", "[redacted]", self.headers.get("User-Agent", ""))[:1000],
+                    })
+                    manual_committed = True
+                    self.redirect(f'/ocop/manual?saved={result["product_id"]}')
+                return True
             if path != "/ocop/access":
                 svc.get_scope(con, session)
             if data is None:
@@ -3201,8 +3218,19 @@ class Handler(BaseHTTPRequestHandler):
                     raise svc.OcopError("Không tìm thấy thao tác OCOP.", 404)
             set_flash(session, "ok", "Đã lưu thay đổi OCOP.")
             self.redirect(destination)
+        except ocop_registry.RegistryError as exc:
+            con.rollback()
+            if path == "/ocop/manual":
+                if data is not None:
+                    ocop_registry.record_failure(con, session)
+                body = ocop_manual.page(con, session, csrf_input(session), query, data=data, error=exc)
+                self.send_html(base_page("Nhập dữ liệu OCOP", body, session, active_path=path), exc.status)
+            else:
+                self.send_html(base_page("Thông báo OCOP", f'<div class="container"><div class="notice err">{esc(exc)}</div></div>', session), exc.status)
         except svc.OcopError as exc:
             con.rollback()
+            if path == "/ocop/manual" and data is not None and is_chi_cuc_user(session) and not manual_committed:
+                ocop_registry.record_failure(con, session)
             status = getattr(exc, "status", 400)
             page = None
             if data is not None and status in (400, 409) and (path.endswith("/new") or path.endswith("/edit")):
@@ -3219,6 +3247,8 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             con.rollback()
             logging.exception("OCOP request failed")
+            if path == "/ocop/manual" and data is not None and not manual_committed:
+                ocop_registry.record_failure(con, session)
             self.send_html(base_page("Thông báo OCOP", '<div class="container"><div class="notice err">Không thể xử lý yêu cầu lúc này. Vui lòng thử lại hoặc liên hệ quản trị.</div></div>', session, active_path=active), 500)
         finally:
             con.close()

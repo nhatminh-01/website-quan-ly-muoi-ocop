@@ -338,7 +338,7 @@ class _Pages:
         pagination = f'<div class="ocop-pagination"><span class="muted">{result.get("total", 0)} sản phẩm · Trang {page}/{pages}</span><div class="actions">{"".join(page_links)}</div></div>'
         actions = '<a class="btn ok" href="/ocop/export.xlsx' + (('?' + export_query) if export_query else '') + '">Xuất Excel</a>'
         if self.admin:
-            actions = '<a class="btn primary" href="/ocop/import">Import dữ liệu OCOP</a>' + actions
+            actions = '<a class="btn primary" href="/ocop/manual">Nhập dữ liệu trực tiếp</a><a class="btn" href="/ocop/import">Import dữ liệu OCOP</a>' + actions
         content = (
             filter_form
             + '<div class="card"><div class="ocop-detail-heading"><h2 class="ocop-section-heading">Danh mục sản phẩm OCOP</h2>'
