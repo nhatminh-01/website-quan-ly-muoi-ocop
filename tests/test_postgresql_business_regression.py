@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import backend_db
 import admin_units
+import ocop_pages
 import ocop_services
 import permissions
 import server
