@@ -33,6 +33,7 @@ MIGRATIONS = (
     "012_admin_units.sql",
     "013_ocop_legacy_import.sql",
     "020_ocop_expiry_indexes.sql",
+    "021_hcmc_168_admin_units.sql",
 )
 
 

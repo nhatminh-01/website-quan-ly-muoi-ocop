@@ -3106,19 +3106,17 @@ class Handler(BaseHTTPRequestHandler):
             if data is None:
                 if len(parts) == 1:
                     body = admin_unit_pages.listing(con,session,query,csrf_input(session),take_flash(session))
-                elif parts == ["admin-units","new"] or (len(parts) == 3 and parts[2] == "edit"):
+                elif len(parts) == 3 and parts[2] == "edit":
                     body = admin_unit_pages.form(con,session,csrf_input(session),code)
                 else:
                     raise admin_units.CatalogError("Không tìm thấy trang.",404)
                 self.send_html(base_page("Danh mục đơn vị hành chính",body,session,active_path="/admin-units"))
             else:
-                con.execute("BEGIN")
-                if parts == ["admin-units","new"] or (len(parts) == 3 and parts[2] == "edit"):
-                    admin_units.save_unit(con,session,data,code)
-                elif len(parts) == 3 and parts[2] in ("activate","deactivate"):
-                    admin_units.set_active(con,session,code,parts[2] == "activate")
+                if len(parts) == 3 and parts[2] == "edit":
+                    con.execute("BEGIN")
+                    admin_units.update_unit(con,session,data,code)
                 else:
-                    raise admin_units.CatalogError("Thao tác không được hỗ trợ; danh mục chỉ ngưng hoạt động, không xóa.",400)
+                    raise admin_units.CatalogError("Thao tác không được hỗ trợ.",405)
                 con.commit()
                 set_flash(session,"ok","Đã lưu danh mục hành chính.")
                 self.redirect("/admin-units")
@@ -3127,7 +3125,7 @@ class Handler(BaseHTTPRequestHandler):
             status = exc.status if isinstance(exc,admin_units.CatalogError) else 409
             message = str(exc) if isinstance(exc,admin_units.CatalogError) else "Mã hoặc dữ liệu đơn vị bị trùng/không hợp lệ."
             body = f'<div class="container"><div class="notice err">{esc(message)}</div><a class="btn" href="/admin-units">Quay lại danh mục</a></div>'
-            if status in (400,409) and data is not None and (parts == ["admin-units","new"] or (len(parts) == 3 and parts[2] == "edit")):
+            if status in (400,409) and data is not None and len(parts) == 3 and parts[2] == "edit":
                 body = admin_unit_pages.form(con,session,csrf_input(session),code,message,data)
             self.send_html(base_page("Danh mục đơn vị hành chính",body,session,active_path="/admin-units"),status)
         finally:
@@ -3987,6 +3985,18 @@ class Handler(BaseHTTPRequestHandler):
             sid=new_session(u); self.redirect("/dashboard",[("Set-Cookie",f"salt_session={sid}; Path=/; HttpOnly; SameSite=Lax")]); return
         sid,session=self.require_session()
         if not session: return
+
+        # Reject removed administrative-catalog lifecycle/create routes before
+        # CSRF validation. These endpoints no longer exist, so a direct HTTP
+        # request must receive 405 instead of being mistaken for a malformed
+        # edit submission (400). The supported edit route continues through
+        # the normal CSRF-protected path below.
+        if path.rstrip("/") == "/admin-units" or path.startswith("/admin-units/"):
+            parts = [part for part in path.split("/") if part]
+            is_edit = len(parts) == 3 and parts[2] == "edit"
+            if not is_edit and self.handle_admin_units(path, parsed.query, session, data):
+                return
+
         if not check_csrf(session,data): self.send_html(base_page("Lỗi","<div class='container'><div class='notice err'>Phiên làm việc không hợp lệ. Vui lòng tải lại trang.</div></div>",session),400); return
         if (path == "/users" or path.startswith("/users/") or path.rstrip("/") == "/ocop/access") and not can_manage_users(session):
             self.send_html(base_page("403", '<div class="container"><div class="notice err">Không có quyền quản lý tài khoản.</div></div>', session), 403)
