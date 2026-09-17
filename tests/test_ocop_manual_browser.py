@@ -34,7 +34,7 @@ class ManualBrowserTests(unittest.TestCase):
                 ])
                 menu_entry = page.locator('.sidebar-group[data-group="ocop"] a', has_text="Nhập dữ liệu")
                 expect(menu_entry).to_have_attribute("href", "/ocop/manual")
-                expect(menu_entry).to_have_class(lambda value: "active" in value.split())
+                self.assertIn("active", (menu_entry.get_attribute("class") or "").split())
                 self.assertEqual(page.locator('[aria-label="Phương thức nhập dữ liệu OCOP"]').count(), 0)
 
                 excel_button = page.get_by_role("link", name="Nhập bằng file Excel", exact=True)
