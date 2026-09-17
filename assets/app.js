@@ -120,31 +120,39 @@
     if (info) info.innerHTML = '<b>Tài khoản nội bộ Chi cục.</b><br>Liên hệ quản trị để được cấp tài khoản. Hệ thống không còn cấp tài khoản đăng nhập cho xã/phường.';
   }
   const sidebarFooter = document.querySelector('.sidebar-footer p');
-  if (sidebarFooter) sidebarFooter.textContent = 'Quản lý tập trung dữ liệu Diêm nghiệp và OCOP.';
+  if (sidebarFooter) sidebarFooter.textContent = 'v.1.0';
 
-  // OCOP exposes one "Nhập dữ liệu" item. The destination page lets users
-  // choose Excel import or direct entry. Keep it above expiry alerts.
+  // OCOP has one "Nhập dữ liệu" menu item and it opens direct-entry immediately.
+  // Excel import remains available from the blue button inside the manual page.
   const ocopLinks = sidebar?.querySelector('.sidebar-group[data-group="ocop"] .sidebar-group-links');
   if (ocopLinks) {
+    const hubLink = ocopLinks.querySelector('a[href="/ocop/data-entry"]');
     const importLink = ocopLinks.querySelector('a[href="/ocop/import"]');
     const manualLink = ocopLinks.querySelector('a[href="/ocop/manual"]');
     const expiryLink = ocopLinks.querySelector('a[href="/ocop/expiry-alerts"]');
-    const sourceLink = manualLink || importLink;
+    const sourceLink = hubLink || manualLink || importLink;
     if (sourceLink && expiryLink) {
       const dataEntryLink = sourceLink.cloneNode(true);
       dataEntryLink.href = '/ocop/manual';
       dataEntryLink.title = 'Nhập dữ liệu';
       const label = dataEntryLink.querySelector('.sidebar-label');
       if (label) label.textContent = 'Nhập dữ liệu';
-      const active = location.pathname === '/ocop/manual' || location.pathname === '/ocop/import';
+      const active = location.pathname === '/ocop/manual' || location.pathname.startsWith('/ocop/import') || location.pathname === '/ocop/data-entry';
       dataEntryLink.classList.toggle('active', active);
       if (active) dataEntryLink.setAttribute('aria-current', 'page');
       else dataEntryLink.removeAttribute('aria-current');
+      hubLink?.remove();
       importLink?.remove();
       manualLink?.remove();
       ocopLinks.insertBefore(dataEntryLink, expiryLink);
     }
   }
+
+  // Old hub links can remain in server-rendered breadcrumbs on older routes.
+  // Point them back to the manual entry screen so the workflow stays direct.
+  document.querySelectorAll('a[href="/ocop/data-entry"]').forEach(link => {
+    link.href = '/ocop/manual';
+  });
 
   const usersHeading = [...document.querySelectorAll('.page-head h1')].find(el => el.textContent.trim() === 'Tài khoản đơn vị');
   if (usersHeading) {
