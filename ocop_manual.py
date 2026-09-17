@@ -85,6 +85,21 @@ def recognition_fields(index, row=None):
             f'<div class="manual-grid">{fields}</div><button type="button" class="btn small" data-remove-recognition>Xóa lần này</button></fieldset>')
 
 
+def _entry_method_cards():
+    return '''<div class="manual-grid" aria-label="Phương thức nhập dữ liệu OCOP">
+      <section class="card">
+        <h2>Import file Excel</h2>
+        <p class="muted">Tải file Excel dữ liệu OCOP lên hệ thống, kiểm tra trước và xác nhận import.</p>
+        <div class="actions"><a class="btn" href="/ocop/import">Import file Excel</a></div>
+      </section>
+      <section class="card">
+        <h2>Nhập dữ liệu trực tiếp</h2>
+        <p class="muted">Nhập trực tiếp thông tin chủ thể, sản phẩm và lịch sử công nhận OCOP.</p>
+        <div class="actions"><a class="btn primary" href="#ocop-manual-form">Nhập dữ liệu</a></div>
+      </section>
+    </div>'''
+
+
 def page(con, session, csrf, query="", data=None, error=None):
     registry.require_internal(con, session)
     query = parse_qs(query)
@@ -96,7 +111,7 @@ def page(con, session, csrf, query="", data=None, error=None):
           <div class="notice ok" role="status">Đã lưu dữ liệu OCOP thành công.</div>
           <div class="card"><h2>{esc(product['name'])}</h2><div class="actions">
           <a class="btn primary" href="/ocop/products/{product['id']}">Xem sản phẩm</a>
-          <a class="btn" href="/ocop/manual">Nhập sản phẩm khác</a></div></div></div>'''
+          <a class="btn" href="/ocop/manual#ocop-manual-form">Nhập sản phẩm khác</a></div></div></div>'''
     if product_id and not data:
         product = svc.get_product(con, session, product_id)
         entity = svc._active_entity_by_code(con, session, product["ma_co_so"])
@@ -141,9 +156,11 @@ def page(con, session, csrf, query="", data=None, error=None):
                      for field in ("append_product_id", "selected_entity_id") if data.get(field))
     save_button = '' if isinstance(error, registry.DuplicateProduct) else '<button class="btn primary" type="submit">Lưu dữ liệu</button>'
     return f'''<div class="container ocop-page manual-page">
-      <div class="page-head"><div><h1>NHẬP DỮ LIỆU OCOP</h1>
-      <div class="subtitle">Nhập chủ thể, sản phẩm và các lần công nhận. Trường có dấu * là bắt buộc.</div></div></div>
-      {notice}<form method="post" action="/ocop/manual" data-ocop-manual>{csrf}{hidden}
+      <div class="page-head"><div><div class="ocop-breadcrumb"><a href="/ocop">OCOP</a> / Nhập dữ liệu</div><h1>NHẬP DỮ LIỆU OCOP</h1>
+      <div class="subtitle">Chọn phương thức nhập dữ liệu vào hệ thống.</div></div></div>
+      {_entry_method_cards()}
+      {notice}<form id="ocop-manual-form" method="post" action="/ocop/manual" data-ocop-manual>
+      {csrf}{hidden}
       <section class="card"><h2>1. Thông tin chủ thể</h2><div class="manual-grid">{entity_fields}</div>
       <p class="muted">Chủ thể trùng tên trong cùng địa bàn sẽ được sử dụng lại; thông tin liên hệ đã có được giữ nguyên.</p></section>
       <section class="card"><h2>2. Thông tin sản phẩm</h2><div class="manual-grid">{product_fields}</div></section>
