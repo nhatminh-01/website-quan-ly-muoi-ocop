@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from datetime import date, timedelta
 from pathlib import Path
 import unittest
 from uuid import uuid4
@@ -27,6 +28,8 @@ MIGRATIONS = (
     "010_weekly_salt_imports.sql",
     "011_weekly_foundation.sql",
     "012_admin_units.sql",
+    "013_ocop_legacy_import.sql",
+    "020_ocop_expiry_indexes.sql",
 )
 
 
@@ -103,6 +106,25 @@ class PostgreSQLCompatibilityContractTests(unittest.TestCase):
         self.assertFalse(permissions.is_chi_cuc_user({"role": "unit"}))
 
 
+class OcopExpiryClassificationTests(unittest.TestCase):
+    def test_expiry_categories_use_calendar_month_boundaries(self):
+        today = date(2026, 1, 31)
+        boundary = ocop_services.add_calendar_months(today, 3)
+        cases = (
+            (today, "expiring"),
+            (ocop_services.add_calendar_months(today, 1), "expiring"),
+            (boundary, "expiring"),
+            (boundary + timedelta(days=1), "valid"),
+            (today - timedelta(days=1), "expired"),
+            (None, "missing_expiry"),
+        )
+        for expiry, expected in cases:
+            with self.subTest(expiry=expiry):
+                self.assertEqual(
+                    ocop_services.classify_ocop_expiry(expiry, today), expected
+                )
+
+
 @unittest.skipUnless(os.getenv("OCOP_TEST_PG_DSN"),
                      "Set OCOP_TEST_PG_DSN to enable disposable PostgreSQL tests")
 class PostgreSQLBusinessRegressionTests(unittest.TestCase):
@@ -162,6 +184,59 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
         con.commit()
         return user_id
 
+    def add_ocop_recognition(self, con, product_id, token, recognition_date,
+                             expiry_date, star, sequence, current):
+        con.execute(
+            """INSERT INTO ocop_recognitions(
+                product_id,source_key,recognition_sequence,evaluation_type,
+                star_rank,recognition_date,recognition_year,decision_number,
+                decision_authority,expiry_date,is_current)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+            (product_id, f"expiry-{token}-{sequence}", sequence,
+             "new" if sequence == 1 else "re_evaluation", star,
+             recognition_date, recognition_date.year, f"QD-{token}-{sequence}",
+             "UBND TPHCM", expiry_date, current),
+        )
+
+    def add_ocop_product(self, con, owner_id, token, unit_code, expiry_date,
+                         star=3, representative="Nguyễn Văn A",
+                         phone="0909000000", email="test@example.com"):
+        facility_code = f"CS{token}"
+        product_code = f"SP{token}"
+        now = "2026-09-11 00:00:00"
+        con.execute(
+            "INSERT INTO DM_SanPham(Ma_SanPham,TenSanPham,NhomSanPham,DonViTinh,TrangThai) "
+            "VALUES(?,?,?,?,TRUE)",
+            (product_code, f"Sản phẩm {token}", "Thực phẩm", ""),
+        )
+        con.execute(
+            "INSERT INTO DM_CoSo(Ma_CoSo,TenCoSo,LoaiCoSo,DiaChi,Ma_DonViHanhChinh) "
+            "VALUES(?,?,?,?,?)",
+            (facility_code, f"Chủ thể {token}", "HTX", f"Địa chỉ {token}", unit_code),
+        )
+        con.execute(
+            """INSERT INTO ocop_entities(
+                ma_co_so,representative_name,phone,email,tax_code,website,
+                description,created_by,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            (facility_code, representative, phone, email, "", "", "",
+             owner_id, now, now),
+        )
+        product_id = con.execute(
+            """INSERT INTO ocop_products(
+                ma_san_pham,ma_co_so,ma_don_vi_hanh_chinh,ten_san_pham,
+                product_group,description,current_star,status,created_by,
+                created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,'active',?,?,?)""",
+            (product_code, facility_code, unit_code, f"Sản phẩm {token}",
+             "Thực phẩm", "", star, owner_id, now, now),
+        ).lastrowid
+        today = con.execute("SELECT CURRENT_DATE AS today").fetchone()["today"]
+        self.add_ocop_recognition(
+            con, product_id, token, today, expiry_date, star, 1, True
+        )
+        return product_id
+
     def test_admin_units_tan_nhut_alias_and_backend_permissions(self):
         con = self.compat()
         try:
@@ -201,6 +276,99 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
             self.assertEqual(title, "Phân địa bàn OCOP")
             self.assertIn("ocop_unit", html)
             self.assertIn("Xã Tân Nhựt", html)
+        finally:
+            con.close()
+
+    def test_ocop_expiry_summary_uses_current_recognition_and_keeps_contacts_missing(self):
+        con = self.compat()
+        try:
+            admin_id = self.create_user(con, "expiry_admin", "admin")
+            session = {"user_id": admin_id, "role": "admin", "unit_name": "Chi cục"}
+            today = con.execute("SELECT CURRENT_DATE AS today").fetchone()["today"]
+            boundary = ocop_services.add_calendar_months(today, 3)
+            product_ids = {}
+            product_ids["today"] = self.add_ocop_product(con, admin_id, "TODAY", "27595", today, 3)
+            product_ids["month"] = self.add_ocop_product(
+                con, admin_id, "MONTH", "27595", ocop_services.add_calendar_months(today, 1), 4,
+                phone="", email=""
+            )
+            product_ids["boundary"] = self.add_ocop_product(con, admin_id, "BOUNDARY", "27595", boundary, 5)
+            product_ids["valid"] = self.add_ocop_product(
+                con, admin_id, "VALID", "27595", boundary + timedelta(days=1), 3
+            )
+            product_ids["expired"] = self.add_ocop_product(
+                con, admin_id, "EXPIRED", "27595", today - timedelta(days=1), 4
+            )
+            product_ids["missing"] = self.add_ocop_product(
+                con, admin_id, "MISSING", "27595", None, 5
+            )
+            product_ids["renewed"] = self.add_ocop_product(
+                con, admin_id, "RENEWED", "27595", today - timedelta(days=1), 3,
+                representative=""
+            )
+            self.add_ocop_recognition(
+                con, product_ids["renewed"], "RENEWED-NEW", today,
+                ocop_services.add_calendar_months(today, 1), 5, 2, False
+            )
+            con.execute(
+                "UPDATE ocop_recognitions SET is_current=FALSE "
+                "WHERE product_id=? AND recognition_sequence=1",
+                (product_ids["renewed"],),
+            )
+            con.execute(
+                "UPDATE ocop_recognitions SET is_current=TRUE "
+                "WHERE product_id=? AND source_key=?",
+                (product_ids["renewed"], "expiry-RENEWED-NEW-2"),
+            )
+            con.commit()
+
+            summary = ocop_services.get_ocop_expiry_summary(con, session)
+            self.assertEqual(summary, {
+                "total_products": 7,
+                "valid_products": 1,
+                "expiring_products": 4,
+                "expired_products": 1,
+                "missing_expiry": 1,
+                "star_3": 2,
+                "star_4": 2,
+                "star_5": 3,
+                "total_entities": 7,
+            })
+            expiring = ocop_services.get_expiring_ocop_products(con, session)
+            self.assertEqual({row["product_id"] for row in expiring}, {
+                product_ids["today"], product_ids["month"],
+                product_ids["boundary"], product_ids["renewed"],
+            })
+            renewed = next(row for row in expiring if row["product_id"] == product_ids["renewed"])
+            self.assertEqual(renewed["recognition_sequence"], 2)
+            self.assertEqual(renewed["days_remaining"],
+                             (renewed["expiry_date"] - today).days)
+            missing_phone = next(row for row in expiring if row["product_id"] == product_ids["month"])
+            self.assertEqual(missing_phone["phone"], "")
+            self.assertEqual(missing_phone["email"], "")
+            missing_representative = next(row for row in expiring if row["product_id"] == product_ids["renewed"])
+            self.assertEqual(missing_representative["representative_name"], "")
+            self.assertEqual(ocop_services.get_expiring_ocop_count(con, session), 4)
+        finally:
+            con.close()
+
+    def test_ocop_expiry_service_respects_unit_scope(self):
+        con = self.compat()
+        try:
+            admin_id = self.create_user(con, "expiry_scope_admin", "admin")
+            unit_id = self.create_user(con, "expiry_scope_unit", "unit", "27595")
+            admin_session = {"user_id": admin_id, "role": "admin", "unit_name": "Chi cục"}
+            unit_session = {"user_id": unit_id, "role": "unit", "unit_name": "Xã Tân Nhựt"}
+            today = con.execute("SELECT CURRENT_DATE AS today").fetchone()["today"]
+            own_product = self.add_ocop_product(con, admin_id, "OWN", "27595", today)
+            other_product = self.add_ocop_product(con, admin_id, "OTHER", "27673", today)
+            con.commit()
+
+            self.assertEqual(ocop_services.get_expiring_ocop_count(con, admin_session), 2)
+            scoped_rows = ocop_services.get_expiring_ocop_products(con, unit_session)
+            self.assertEqual([row["product_id"] for row in scoped_rows], [own_product])
+            self.assertNotIn(other_product, {row["product_id"] for row in scoped_rows})
+            self.assertEqual(ocop_services.get_ocop_expiry_summary(con, unit_session)["total_entities"], 1)
         finally:
             con.close()
 

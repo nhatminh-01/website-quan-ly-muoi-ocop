@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from collections.abc import Mapping
+import calendar
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from functools import wraps
@@ -27,6 +28,31 @@ APP_STATUSES = ("draft", "submitted", "checking", "returned", "eligible", "scori
 EVALUATION_TYPES = ("new", "re_evaluation", "upgrade")
 LOCKED_STATUSES = ("submitted", "checking", "eligible", "scoring", "completed")
 OPEN_STATUSES = ("draft", "submitted", "checking", "returned", "eligible", "scoring")
+OCOP_EXPIRY_CATEGORIES = ("valid", "expiring", "expired", "missing_expiry")
+
+
+def add_calendar_months(value, months):
+    """Return ``value`` shifted by calendar months, clamping month-end dates."""
+    if not isinstance(value, date):
+        raise TypeError("value must be a date")
+    month_index = value.year * 12 + value.month - 1 + months
+    year, month_index = divmod(month_index, 12)
+    month = month_index + 1
+    day = min(value.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def classify_ocop_expiry(expiry_date, today=None):
+    """Classify one current recognition using a three-calendar-month window."""
+    if expiry_date is None:
+        return "missing_expiry"
+    today = today or date.today()
+    three_month_boundary = add_calendar_months(today, 3)
+    if expiry_date < today:
+        return "expired"
+    if expiry_date <= three_month_boundary:
+        return "expiring"
+    return "valid"
 
 
 def _json_value(value):
@@ -338,6 +364,95 @@ def list_products(con, session, filters=None):
         ("p.ten_san_pham", "p.ma_san_pham", "c.TenCoSo"), "p.status",
         {"updated_at": "p.updated_at", "name": "p.ten_san_pham", "created_at": "p.created_at"},
         (("group", "p.product_group", "text"), ("star", "COALESCE(r.star_rank,p.current_star)", "int")))
+
+
+OCOP_EXPIRY_SELECT = """SELECT p.id AS product_id,p.ma_san_pham,p.ten_san_pham AS product_name,
+    r.star_rank,r.expiry_date,
+    CASE
+        WHEN r.expiry_date IS NULL THEN 'missing_expiry'
+        WHEN r.expiry_date < CURRENT_DATE THEN 'expired'
+        WHEN r.expiry_date <= CURRENT_DATE + INTERVAL '3 months' THEN 'expiring'
+        ELSE 'valid'
+    END AS expiry_status,
+    CASE WHEN r.expiry_date IS NULL THEN NULL ELSE r.expiry_date - CURRENT_DATE END AS days_remaining,
+    p.ma_co_so,c.TenCoSo AS entity_name,c.DiaChi AS address,
+    e.id AS entity_id,e.representative_name,e.phone,e.email,
+    p.ma_don_vi_hanh_chinh,d.TenDonVi AS unit_name,
+    r.recognition_sequence,r.recognition_date,r.decision_number,r.decision_authority
+    FROM ocop_products p
+    JOIN ocop_recognitions r ON r.product_id=p.id AND r.is_current=TRUE
+    JOIN DM_CoSo c ON c.Ma_CoSo=p.ma_co_so
+    JOIN DM_DonViHanhChinh d ON d.Ma_DonViHanhChinh=p.ma_don_vi_hanh_chinh
+    LEFT JOIN ocop_entities e ON e.ma_co_so=p.ma_co_so
+    WHERE p.status='active'"""
+
+
+def _ocop_expiry_query(con, session, status=None, filters=None):
+    """Build one scoped query for active products and current recognitions."""
+    if status is not None and status not in OCOP_EXPIRY_CATEGORIES:
+        raise OcopError("Trạng thái hiệu lực OCOP không hợp lệ.")
+    filters = filters or {}
+    scope = get_scope(con, session)
+    selected_unit = _text(filters, "unit", 10,
+                          default=_value(filters, "ma_don_vi_hanh_chinh", ""))
+    if selected_unit:
+        _check_unit(con, session, selected_unit)
+    unit = scope or selected_unit
+
+    sql = "SELECT * FROM (" + OCOP_EXPIRY_SELECT + ") AS expiry"
+    where, args = ["1=1"], []
+    if unit:
+        where.append("expiry.ma_don_vi_hanh_chinh=?")
+        args.append(unit)
+    if status:
+        where.append("expiry.expiry_status=?")
+        args.append(status)
+    return sql + " WHERE " + " AND ".join(where), args, unit
+
+
+def list_ocop_expiry_products(con, session, status=None, filters=None):
+    """List active products by current-recognition expiry status and scope."""
+    sql, args, _ = _ocop_expiry_query(con, session, status, filters)
+    return _all(con, sql + " ORDER BY expiry.expiry_date ASC NULLS LAST,expiry.product_name,expiry.product_id", args)
+
+
+def get_expiring_ocop_products(con, session, filters=None):
+    """Return products whose current recognition expires within three calendar months."""
+    return list_ocop_expiry_products(con, session, "expiring", filters)
+
+
+def get_expiring_ocop_count(con, session, filters=None):
+    """Return the scoped count of products expiring within three calendar months."""
+    sql, args, _ = _ocop_expiry_query(con, session, "expiring", filters)
+    return _one(con, "SELECT COUNT(*) AS n FROM (" + sql + ") AS expiry_count", args)["n"]
+
+
+def get_ocop_expiry_summary(con, session, filters=None):
+    """Summarize current-recognition expiry states for the authorized scope.
+
+    ``total_products`` counts active products that have exactly one current
+    recognition. Products without a current recognition are intentionally not
+    classified by this service.
+    """
+    sql, args, unit = _ocop_expiry_query(con, session, filters=filters)
+    counts = _one(con, """SELECT COUNT(*) AS total_products,
+        COUNT(*) FILTER (WHERE expiry_status='valid') AS valid_products,
+        COUNT(*) FILTER (WHERE expiry_status='expiring') AS expiring_products,
+        COUNT(*) FILTER (WHERE expiry_status='expired') AS expired_products,
+        COUNT(*) FILTER (WHERE expiry_status='missing_expiry') AS missing_expiry,
+        COUNT(*) FILTER (WHERE star_rank=3) AS star_3,
+        COUNT(*) FILTER (WHERE star_rank=4) AS star_4,
+        COUNT(*) FILTER (WHERE star_rank=5) AS star_5
+        FROM (""" + sql + ") AS expiry_summary", args)
+    entity_sql = "SELECT COUNT(*) AS total_entities FROM ocop_entities e JOIN DM_CoSo c ON c.Ma_CoSo=e.ma_co_so WHERE e.archived_at IS NULL"
+    entity_args = []
+    if unit:
+        entity_sql += " AND c.Ma_DonViHanhChinh=?"
+        entity_args.append(unit)
+    counts["total_entities"] = _one(con, entity_sql, entity_args)["total_entities"]
+    return {key: int(counts.get(key) or 0) for key in (
+        "total_products", "valid_products", "expiring_products", "expired_products",
+        "missing_expiry", "star_3", "star_4", "star_5", "total_entities")}
 
 
 def export_products(con, session, filters=None):
