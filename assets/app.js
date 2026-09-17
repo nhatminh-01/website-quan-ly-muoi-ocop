@@ -5,6 +5,7 @@
   const main = document.getElementById('main-content');
   const backdrop = document.getElementById('sidebar-backdrop');
   const mobile = window.matchMedia('(max-width: 900px)');
+  const sidebarScrollKey = 'salt-sidebar-scroll';
   let collapsed = false;
   try { collapsed = localStorage.getItem('salt-sidebar-collapsed') === 'true'; } catch (_) {}
   function syncMenu() {
@@ -31,7 +32,7 @@
     }
     syncMenu();
     if (mobile.matches && document.body.classList.contains('sidebar-open')) {
-      sidebar?.querySelector('input, a, button')?.focus();
+      sidebar?.querySelector('input, a, button')?.focus({ preventScroll: true });
     }
   });
   if (backdrop) backdrop.addEventListener('click', () => { closeDrawer(); menu?.focus(); });
@@ -54,6 +55,32 @@
     });
   });
   syncMenu();
+
+  function restoreSidebarScroll() {
+    if (!sidebar) return;
+    let savedScrollTop;
+    try {
+      const savedValue = sessionStorage.getItem(sidebarScrollKey);
+      if (savedValue === null) return;
+      savedScrollTop = Number(savedValue);
+    } catch (_) { return; }
+    if (!Number.isFinite(savedScrollTop)) return;
+
+    sidebar.scrollTop = Math.max(0, Math.min(savedScrollTop, sidebar.scrollHeight - sidebar.clientHeight));
+    const activeLink = sidebar.querySelector('.sidebar-link.active');
+    if (!activeLink) return;
+    const sidebarRect = sidebar.getBoundingClientRect();
+    const activeRect = activeLink.getBoundingClientRect();
+    const activeIsVisible = activeRect.bottom > sidebarRect.top && activeRect.top < sidebarRect.bottom;
+    if (!activeIsVisible) activeLink.scrollIntoView({ block: 'nearest' });
+  }
+
+  if (sidebar) {
+    sidebar.addEventListener('scroll', () => {
+      try { sessionStorage.setItem(sidebarScrollKey, String(sidebar.scrollTop)); } catch (_) {}
+    }, { passive: true });
+    requestAnimationFrame(() => requestAnimationFrame(restoreSidebarScroll));
+  }
 
   // Weekly summary details stay in a modal so the table width does not change.
   const weeklyDialogTriggers = document.querySelectorAll('[data-weekly-dialog]');
