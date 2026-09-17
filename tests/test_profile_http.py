@@ -1,4 +1,5 @@
 """Profile navigation, account integration and activity history through app_server."""
+from html import escape
 from html.parser import HTMLParser
 import http.client
 import os
@@ -10,6 +11,7 @@ from urllib.parse import urlencode
 
 import app_server
 import backend_db
+import ocop_pages
 import server
 import user_profiles
 import test_user_profiles as profile_tests
@@ -104,6 +106,80 @@ class ProfileHeaderTests(unittest.TestCase):
         session = {"username": "old_unit", "role": "unit", "unit_name": "Xã cũ"}
         with patch.object(server, "ocop_available", return_value=False):
             self.assertNotIn('href="/profile"', server.base_page("Trang chủ", "", session))
+
+
+class OcopPresentationTests(unittest.TestCase):
+    def page(self, return_context=""):
+        page = object.__new__(ocop_pages._Pages)
+        page.escape = lambda value, quote=True: escape(str(value or ""), quote=quote)
+        page.return_context = return_context
+        page.admin = True
+        page.scope = None
+        page.session = {}
+        page.csrf = ""
+        return page
+
+    def test_missing_contact_is_rendered_once_without_duplicate_warning(self):
+        html = self.page().contact_markup({
+            "has_contact": False,
+            "representative_name": "",
+            "phone": "",
+            "email": "",
+        })
+        self.assertEqual(html.count("Chưa có thông tin liên hệ"), 1)
+        self.assertNotIn("Thiếu thông tin liên hệ", html)
+        self.assertNotIn("Chưa cập nhật", html)
+
+    def test_contact_markup_only_renders_values_that_exist(self):
+        html = self.page().contact_markup({
+            "has_contact": True,
+            "representative_name": "",
+            "phone": "0909000000",
+            "email": "",
+        })
+        self.assertIn("Số điện thoại:", html)
+        self.assertIn("0909000000", html)
+        self.assertNotIn("Người đại diện:", html)
+        self.assertNotIn("Email:", html)
+        self.assertNotIn("Chưa cập nhật", html)
+
+    def test_product_detail_uses_whitelisted_back_context_and_formats_dates(self):
+        row = {
+            "id": 123,
+            "status": "active",
+            "name": "Sản phẩm thử",
+            "ma_san_pham": "SP123",
+            "entity_name": "Chủ thể thử",
+            "ma_co_so": "CS123",
+            "facility_type": "HTX",
+            "address": "Địa chỉ thử",
+            "representative_name": "Nguyễn Văn A",
+            "phone": "0909000000",
+            "email": "a@example.com",
+            "unit_name": "Xã thử",
+            "product_group": "Thực phẩm",
+            "recognition_star": 4,
+            "latest_recognition_date": "2026-10-27",
+            "latest_expiry_date": "2027-01-31",
+            "latest_decision_number": "QD-123",
+            "latest_decision_authority": "UBND",
+            "updated_at": "2026-09-17 08:00:00",
+            "created_at": "2026-09-17 07:00:00",
+        }
+        expiry_html = self.page("expiry").detail_page("products", row)[1]
+        self.assertIn('href="/ocop/expiry-alerts"', expiry_html)
+        self.assertIn("← Cảnh báo hết hạn", expiry_html)
+        self.assertIn("27/10/2026", expiry_html)
+        self.assertIn("31/01/2027", expiry_html)
+        self.assertIn("Địa chỉ chủ thể", expiry_html)
+        self.assertIn("a@example.com", expiry_html)
+
+        catalog_html = self.page("catalog").detail_page("products", row)[1]
+        self.assertIn('href="/ocop"', catalog_html)
+        self.assertIn("← Tra cứu OCOP", catalog_html)
+        arbitrary_html = self.page("https://example.com").detail_page("products", row)[1]
+        self.assertIn('href="/ocop"', arbitrary_html)
+        self.assertNotIn('href="/ocop/expiry-alerts"', arbitrary_html)
 
 
 class Client:

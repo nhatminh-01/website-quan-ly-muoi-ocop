@@ -355,12 +355,12 @@ body.sidebar-collapsed{--sidebar-width:78px}
 .ocop-expiry-table td:nth-child(5){min-width:190px}
 .ocop-expiry-table td:nth-child(6){min-width:245px}
 .ocop-expiry-table td:nth-child(7){min-width:145px}
+.ocop-expiry-table td:last-child{white-space:nowrap;width:85px}
 .ocop-contact{display:grid;gap:3px;line-height:1.45}
 .ocop-contact>b,.ocop-contact span{overflow-wrap:anywhere}
 .ocop-contact a{overflow-wrap:anywhere}
 .ocop-contact-sub{display:block;color:var(--muted);font-size:12px;line-height:1.4}
 .ocop-contact-empty{display:block;color:var(--muted);font-size:13px;line-height:1.45}
-.ocop-contact-warning{display:inline-flex;width:max-content;padding:2px 6px;border-radius:999px;background:#fff1d6;color:#9a5f05;font-size:11px;font-weight:700}
 .ocop-expiry-band{display:inline-block;margin-top:5px;padding:3px 7px;border-radius:999px;font-size:11px;font-weight:700;line-height:1.2}
 .ocop-expiry-band.critical{background:#fde7e7;color:#a33a3a}
 .ocop-expiry-band.soon{background:#fff1d6;color:#9a5f05}

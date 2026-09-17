@@ -129,6 +129,24 @@ class OcopExpiryClassificationTests(unittest.TestCase):
                     ocop_services.classify_ocop_expiry(expiry, today), expected
                 )
 
+    def test_expiry_filters_use_cumulative_calendar_months(self):
+        expected_intervals = {
+            "up_to_1_month": "INTERVAL '1 month'",
+            "up_to_2_months": "INTERVAL '2 months'",
+            "up_to_3_months": "INTERVAL '3 months'",
+        }
+        with patch.object(ocop_services, "get_scope", return_value=None):
+            for filter_value, interval in expected_intervals.items():
+                with self.subTest(filter_value=filter_value):
+                    sql, args, unit = ocop_services._ocop_expiry_query(
+                        object(), None, "expiring", {"remaining": filter_value}
+                    )
+                    self.assertEqual(args, ["expiring"])
+                    self.assertEqual(unit, "")
+                    self.assertIn("expiry.expiry_date >= CURRENT_DATE", sql)
+                    self.assertIn("expiry.expiry_date <= CURRENT_DATE + " + interval, sql)
+                    self.assertNotIn("BETWEEN", sql)
+
 
 @unittest.skipUnless(os.getenv("OCOP_TEST_PG_DSN"),
                      "Set OCOP_TEST_PG_DSN to enable disposable PostgreSQL tests")
@@ -431,22 +449,24 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
             )
             self.assertEqual(
                 {row["product_id"] for row in ocop_services.get_expiring_ocop_products(
-                    con, session, {"remaining": "up_to_30"}
+                    con, session, {"remaining": "up_to_1_month"}
                 )},
                 {product_ids["today"], product_ids["month"],
                  product_ids["renewed"], product_ids["no_entity"]},
             )
             self.assertEqual(
                 {row["product_id"] for row in ocop_services.get_expiring_ocop_products(
-                    con, session, {"remaining": "31_60"}
+                    con, session, {"remaining": "up_to_2_months"}
                 )},
-                {product_ids["middle"]},
+                {product_ids["today"], product_ids["month"], product_ids["middle"],
+                 product_ids["renewed"], product_ids["no_entity"]},
             )
             self.assertEqual(
                 {row["product_id"] for row in ocop_services.get_expiring_ocop_products(
-                    con, session, {"remaining": "over_60"}
+                    con, session, {"remaining": "up_to_3_months"}
                 )},
-                {product_ids["boundary"]},
+                {product_ids["today"], product_ids["month"], product_ids["middle"],
+                 product_ids["boundary"], product_ids["renewed"], product_ids["no_entity"]},
             )
 
             title, html = ocop_pages.render(
@@ -456,8 +476,10 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
             self.assertEqual(title, "Cảnh báo hết hạn OCOP")
             self.assertIn("Đầu mối liên hệ", html)
             self.assertIn("Chưa có thông tin liên hệ", html)
-            self.assertIn("Thiếu thông tin liên hệ", html)
-            self.assertIn("Chưa cập nhật", html)
+            self.assertEqual(html.count('<span class="ocop-contact-empty">Chưa có thông tin liên hệ</span>'), 2)
+            self.assertNotIn("Thiếu thông tin liên hệ", html)
+            self.assertNotIn("Người đại diện:</b> Chưa cập nhật", html)
+            self.assertNotIn("Số điện thoại:</b> Chưa cập nhật", html)
             self.assertIn("Sản phẩm TODAY", html)
             self.assertIn("tel:0909000000", html)
             self.assertIn("mailto:middle@example.com", html)
@@ -465,10 +487,39 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
             self.assertIn("Dưới 1 tháng", html)
             self.assertIn("Dưới 2 tháng", html)
             self.assertIn("Dưới 3 tháng", html)
-            self.assertIn('/ocop/products/' + str(product_ids["today"]), html)
+            self.assertIn('/ocop/products/' + str(product_ids["today"]) + '?from=expiry', html)
+            self.assertIn('>Chi tiết</a>', html)
             self.assertIn('ocop-expiry-band critical', html)
             self.assertIn('ocop-expiry-band soon', html)
             self.assertIn('ocop-expiry-band later', html)
+
+            detail_title, detail_html = ocop_pages.render(
+                "/ocop/products/" + str(product_ids["today"]), "from=expiry", session, con,
+                {"esc": server.esc, "csrf_input": server.csrf_input, "icon": server.icon},
+            )
+            self.assertEqual(detail_title, "Sản phẩm TODAY")
+            self.assertIn('href="/ocop/expiry-alerts"', detail_html)
+            self.assertIn("← Cảnh báo hết hạn", detail_html)
+            self.assertIn("Địa chỉ chủ thể", detail_html)
+            self.assertIn("Email", detail_html)
+            self.assertIn(today.strftime("%d/%m/%Y"), detail_html)
+
+            missing_detail_title, missing_detail_html = ocop_pages.render(
+                "/ocop/products/" + str(product_ids["no_entity"]), "from=expiry", session, con,
+                {"esc": server.esc, "csrf_input": server.csrf_input, "icon": server.icon},
+            )
+            self.assertEqual(missing_detail_title, "Sản phẩm NOENTITY")
+            self.assertIn("Địa chỉ chủ thể", missing_detail_html)
+            self.assertIn("Email", missing_detail_html)
+            self.assertIn("—", missing_detail_html)
+
+            catalog_title, catalog_html = ocop_pages.render(
+                "/ocop", "", session, con,
+                {"esc": server.esc, "csrf_input": server.csrf_input, "icon": server.icon},
+            )
+            self.assertEqual(catalog_title, "Tra cứu OCOP")
+            self.assertIn('/ocop/products/' + str(product_ids["today"]) + '?from=catalog', catalog_html)
+            self.assertIn(today.strftime("%d/%m/%Y"), catalog_html)
 
             captured = {}
 

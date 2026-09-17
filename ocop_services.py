@@ -186,9 +186,9 @@ ENTITY_SELECT = """SELECT e.*,c.TenCoSo AS name,c.LoaiCoSo AS facility_type,c.Di
     CASE WHEN e.archived_at IS NULL THEN 'active' ELSE 'archived' END AS status
     FROM ocop_entities e JOIN DM_CoSo c ON c.Ma_CoSo=e.ma_co_so
     JOIN DM_DonViHanhChinh d ON d.Ma_DonViHanhChinh=c.Ma_DonViHanhChinh"""
-PRODUCT_SELECT = """SELECT p.*,p.ten_san_pham AS name,c.TenCoSo AS entity_name,d.TenDonVi AS unit_name,
+PRODUCT_SELECT = """SELECT p.*,p.ten_san_pham AS name,c.TenCoSo AS entity_name,c.DiaChi AS address,d.TenDonVi AS unit_name,
     c.LoaiCoSo AS facility_type,e.id AS entity_id,e.archived_at AS entity_archived_at,
-    e.representative_name,e.phone,
+    e.representative_name,e.phone,e.email,
     cs.code AS criteria_set_code,cs.name AS criteria_set_name,cs.product_category AS criteria_category,
     cs.product_group AS criteria_group,cs.product_subgroup AS criteria_subgroup,
     cs.legal_document AS criteria_legal_document,cs.version AS criteria_version,
@@ -197,7 +197,7 @@ PRODUCT_SELECT = """SELECT p.*,p.ten_san_pham AS name,c.TenCoSo AS entity_name,d
     r.decision_number AS latest_decision_number,r.decision_authority AS latest_decision_authority,
     r.expiry_date AS latest_expiry_date
     FROM app.ocop_products p JOIN qd5277.DM_CoSo c ON c.Ma_CoSo=p.ma_co_so
-    JOIN app.ocop_entities e ON e.ma_co_so=p.ma_co_so
+    LEFT JOIN app.ocop_entities e ON e.ma_co_so=p.ma_co_so
     JOIN qd5277.DM_DonViHanhChinh d ON d.Ma_DonViHanhChinh=p.ma_don_vi_hanh_chinh
     LEFT JOIN app.ocop_criteria_sets cs ON cs.id=p.criteria_set_id
     LEFT JOIN app.ocop_recognitions r ON r.product_id=p.id AND r.is_current=TRUE"""
@@ -434,10 +434,19 @@ def _ocop_expiry_query(con, session, status=None, filters=None):
     elif contact == "none":
         where.append("expiry.has_contact=FALSE")
     remaining = _text(filters, "remaining", 20)
+    # Keep the existing query values for backward compatibility, but make
+    # their meaning match the cumulative month labels in the UI.
+    one_month = "expiry.expiry_date >= CURRENT_DATE AND expiry.expiry_date <= CURRENT_DATE + INTERVAL '1 month'"
+    two_months = "expiry.expiry_date >= CURRENT_DATE AND expiry.expiry_date <= CURRENT_DATE + INTERVAL '2 months'"
+    three_months = "expiry.expiry_date >= CURRENT_DATE AND expiry.expiry_date <= CURRENT_DATE + INTERVAL '3 months'"
     remaining_clauses = {
-        "up_to_30": "expiry.days_remaining BETWEEN 0 AND 30",
-        "31_60": "expiry.days_remaining BETWEEN 31 AND 60",
-        "over_60": "expiry.days_remaining>60",
+        "up_to_1_month": one_month,
+        "up_to_2_months": two_months,
+        "up_to_3_months": three_months,
+        # Legacy query values retained for existing bookmarked URLs.
+        "up_to_30": one_month,
+        "31_60": two_months,
+        "over_60": three_months,
     }
     if remaining and remaining not in remaining_clauses:
         raise OcopError("Bộ lọc thời gian còn lại không hợp lệ.")

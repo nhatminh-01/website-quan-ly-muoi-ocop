@@ -1,6 +1,6 @@
 """Vietnamese server-rendered pages for OCOP foundation and dynamic criteria."""
 
-from datetime import date
+from datetime import date, datetime
 from html import escape
 from urllib.parse import parse_qs, quote, urlencode
 import re
@@ -76,6 +76,34 @@ def _expiry_band(days):
     return "later", "> 60 ngày"
 
 
+def format_ocop_date(value):
+    """Format date-like OCOP values for the UI without changing stored data."""
+    if value in (None, ""):
+        return "—"
+    if isinstance(value, datetime):
+        return value.date().strftime("%d/%m/%Y")
+    if isinstance(value, date):
+        return value.strftime("%d/%m/%Y")
+    text = str(value).strip()
+    if not text:
+        return "—"
+    if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+        try:
+            return date.fromisoformat(text[:10]).strftime("%d/%m/%Y")
+        except ValueError:
+            pass
+    return text
+
+
+def _return_context(query):
+    values = query if isinstance(query, dict) else parse_qs(str(query or "").lstrip("?"))
+    value = values.get("from", "")
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else ""
+    value = str(value).strip()
+    return value if value in {"expiry", "catalog"} else ""
+
+
 def _filters(query):
     if isinstance(query, dict):
         values = query
@@ -104,7 +132,7 @@ def render(path, query, session, con, helpers):
         clean_path,
     ):
         return None
-    page = _Pages(session, con, helpers, _filters(query))
+    page = _Pages(session, con, helpers, _filters(query), _return_context(query))
     if clean_path == "/ocop":
         return page.catalog_page()
     if clean_path == "/ocop/expiry-alerts":
@@ -130,10 +158,11 @@ def render(path, query, session, con, helpers):
 
 
 class _Pages:
-    def __init__(self, session, con, helpers, filters):
+    def __init__(self, session, con, helpers, filters, return_context=""):
         self.session = session
         self.con = con
         self.filters = filters
+        self.return_context = return_context
         self.admin = is_chi_cuc_user(session)
         self.scope = svc.get_scope(con, session)
         self.escape = helpers.get("esc") or (lambda value: escape(str(value or ""), quote=True))
@@ -288,14 +317,15 @@ class _Pages:
         rendered = []
         for row in rows:
             rank = row.get("recognition_star") or row.get("current_star")
+            detail_href = self.url("products", row) + "?from=catalog"
             rendered.append(
                 '<tr>'
                 f'<td>{self.e(row.get("unit_name"))}</td>'
-                f'<td><a href="/ocop/products/{self.e(row.get("id"))}"><strong>{self.e(row.get("name"))}</strong></a></td>'
+                f'<td><a href="{self.e(detail_href)}"><strong>{self.e(row.get("name"))}</strong></a></td>'
                 f'<td>{self.e(row.get("entity_name"))}</td>'
                 f'<td>{self.e(row.get("product_group"))}</td><td>{self.e((str(rank) + " sao") if rank else "")}</td>'
-                f'<td>{self.e(row.get("latest_recognition_date"))}</td><td>{self.e(row.get("latest_expiry_date"))}</td>'
-                f'<td><a class="btn small" href="/ocop/products/{self.e(row.get("id"))}">Chi tiết</a></td></tr>'
+                f'<td>{self.e(format_ocop_date(row.get("latest_recognition_date")))}</td><td>{self.e(format_ocop_date(row.get("latest_expiry_date")))}</td>'
+                f'<td><a class="btn small" href="{self.e(detail_href)}">Chi tiết</a></td></tr>'
             )
         table_rows = ''.join(rendered) or '<tr><td colspan="8" class="empty">Chưa có sản phẩm OCOP phù hợp.</td></tr>'
         page = int(result.get("page") or 1)
@@ -320,29 +350,24 @@ class _Pages:
         return self.wrap("Tra cứu OCOP", "Tra cứu sản phẩm theo địa bàn, chủ thể, nhóm sản phẩm và hạng sao.", content, actions)
 
     def contact_markup(self, row):
+        if not row.get("has_contact"):
+            return '<div class="ocop-contact"><span class="ocop-contact-empty">Chưa có thông tin liên hệ</span></div>'
+
         parts = []
         representative = str(row.get("representative_name") or "").strip()
-        parts.append(
-            '<span><b>Người đại diện:</b> '
-            + (self.e(representative) if representative else "Chưa cập nhật")
-            + '</span>'
-        )
+        if representative:
+            parts.append('<span><b>Người đại diện:</b> ' + self.e(representative) + '</span>')
         phone = str(row.get("phone") or "").strip()
         if phone:
             phone_href = _phone_href(phone)
             phone_html = self.e(phone)
             if phone_href:
                 phone_html = '<a href="' + self.e("tel:" + phone_href) + '">' + phone_html + '</a>'
-        else:
-            phone_html = "Chưa cập nhật"
-        parts.append('<span><b>Số điện thoại:</b> ' + phone_html + '</span>')
+            parts.append('<span><b>Số điện thoại:</b> ' + phone_html + '</span>')
         email = str(row.get("email") or "").strip()
         if email:
             email_href = quote(email, safe="@._+-")
             parts.append('<span><b>Email:</b> <a href="' + self.e("mailto:" + email_href) + '">' + self.e(email) + '</a></span>')
-        if not row.get("has_contact"):
-            parts.append('<span class="ocop-contact-warning">Thiếu thông tin liên hệ</span>')
-            parts.append('<span class="ocop-contact-empty">Chưa có thông tin liên hệ</span>')
         return '<div class="ocop-contact">' + ''.join(parts) + '</div>'
 
     def expiry_alerts(self):
@@ -357,9 +382,9 @@ class _Pages:
             + self.select("star", "Hạng sao", [("3", "3 sao"), ("4", "4 sao"), ("5", "5 sao")],
                           f.get("star", ""), empty="Tất cả hạng")
             + self.select("remaining", "Thời gian còn lại", [
-                ("up_to_30", "Dưới 1 tháng"),
-                ("31_60", "Dưới 2 tháng"),
-                ("over_60", "Dưới 3 tháng"),
+                ("up_to_1_month", "Dưới 1 tháng"),
+                ("up_to_2_months", "Dưới 2 tháng"),
+                ("up_to_3_months", "Dưới 3 tháng"),
             ], f.get("remaining", ""), empty="Tất cả dưới 3 tháng")
             + self.select("contact", "Thông tin liên hệ", [
                 ("has", "Có thông tin liên hệ"),
@@ -376,10 +401,10 @@ class _Pages:
         rendered = []
         for row in rows:
             product_code = self.e(row.get("ma_san_pham"))
-            product_id = self.e(row.get("product_id"))
+            product_href = "/ocop/products/" + quote(str(row.get("product_id")), safe="") + "?from=expiry"
             product_cell = (
                 '<span class="ocop-row-id">' + product_code + '</span>'
-                '<a href="/ocop/products/' + product_id + '"><strong>'
+                '<a href="' + self.e(product_href) + '"><strong>'
                 + self.e(row.get("product_name")) + '</strong></a>'
             )
             entity_cell = (
@@ -398,11 +423,7 @@ class _Pages:
                 '<span class="ocop-expiry-band ' + self.e(band_class) + '">'
                 + self.e(band_label) + '</span>'
             ) if band_label else ''
-            expiry = row.get("expiry_date")
-            if isinstance(expiry, date):
-                expiry_label = expiry.strftime("%d/%m/%Y")
-            else:
-                expiry_label = str(expiry or "—")
+            expiry_label = format_ocop_date(row.get("expiry_date"))
             rendered.append(
                 '<tr>'
                 '<td><strong>' + self.e(days_label) + '</strong>' + band_html + '</td>'
@@ -413,16 +434,17 @@ class _Pages:
                 '<td>' + self.contact_markup(row) + '</td>'
                 '<td><span class="ocop-contact-sub">' + self.e(row.get("administrative_unit_code")) + '</span>'
                 '<strong>' + self.e(row.get("administrative_unit_name")) + '</strong></td>'
+                '<td><a class="btn small" href="' + self.e(product_href) + '">Chi tiết</a></td>'
                 '</tr>'
             )
-        table_rows = ''.join(rendered) or '<tr><td colspan="7" class="empty">Không có sản phẩm sắp hết hạn phù hợp.</td></tr>'
+        table_rows = ''.join(rendered) or '<tr><td colspan="8" class="empty">Không có sản phẩm sắp hết hạn phù hợp.</td></tr>'
         content = (
             filter_form
             + '<div class="card"><div class="ocop-detail-heading"><div><h2 class="ocop-section-heading">Sản phẩm sắp hết hạn</h2>'
             + '<p class="muted ocop-alert-note">Chỉ tính recognition hiện hành. Thông tin liên hệ được hiển thị đúng theo dữ liệu đang có.</p></div>'
             + '<span class="muted">' + self.e(len(rows)) + ' sản phẩm</span></div>'
             + '<div class="table-wrap"><table class="summary-table ocop-table ocop-expiry-table"><thead><tr>'
-            + '<th>Còn hạn</th><th>Sản phẩm</th><th>Hạng</th><th>Ngày hết hạn</th><th>Chủ thể</th><th>Đầu mối liên hệ</th><th>Địa bàn</th>'
+            + '<th>Còn hạn</th><th>Sản phẩm</th><th>Hạng</th><th>Ngày hết hạn</th><th>Chủ thể</th><th>Đầu mối liên hệ</th><th>Địa bàn</th><th>Chi tiết</th>'
             + '</tr></thead><tbody>' + table_rows + '</tbody></table></div></div>'
         )
         return self.wrap(
@@ -490,7 +512,7 @@ class _Pages:
             table_rows.append(
                 '<tr><td><span class="ocop-row-id">' + self.e(row.get("code")) + '</span><strong>'
                 + self.e(row.get("name")) + '</strong></td><td>' + classification + '</td><td>'
-                + self.e(row.get("version")) + '</td><td>' + self.e(row.get("effective_from"))
+                + self.e(row.get("version")) + '</td><td>' + self.e(format_ocop_date(row.get("effective_from")))
                 + '</td><td class="right"><strong>' + self.e(row.get("max_score")) + '</strong></td><td>'
                 + self.link('/ocop/criteria/' + str(row["id"]), "Xem", "small") + '</td></tr>'
             )
@@ -656,14 +678,18 @@ class _Pages:
 
     def details(self, pairs):
         return '<dl class="ocop-details">' + "".join(
-            f'<div><dt>{self.e(label)}</dt><dd>{self.e(value) if value not in (None, "") else "—"}</dd></div>'
+            f'<div><dt>{self.e(label)}</dt><dd>{self.e(format_ocop_date(value))}</dd></div>'
             for label, value in pairs
         ) + "</dl>"
 
     def detail_page(self, kind, row):
         title, noun, _new_label = KINDS[kind]
         status = row.get("status", "active")
-        actions = self.link(self.url(kind), "← Danh sách")
+        if kind == "products" and self.return_context == "expiry":
+            back_href, back_label = "/ocop/expiry-alerts", "← Cảnh báo hết hạn"
+        else:
+            back_href, back_label = "/ocop", "← Tra cứu OCOP"
+        actions = self.link(back_href, back_label)
         can_edit = status in ("draft", "returned") if kind == "applications" else status != "archived"
         if can_edit:
             actions += self.link(self.url(kind, row, "edit"), "Chỉnh sửa", "primary")
@@ -681,7 +707,9 @@ class _Pages:
                 ("Tên sản phẩm", row.get("name")), ("Mã sản phẩm", row.get("ma_san_pham")),
                 ("Chủ thể", row.get("entity_name")), ("Mã cơ sở", row.get("ma_co_so")),
                 ("Loại hình chủ thể", row.get("facility_type")),
+                ("Địa chỉ chủ thể", row.get("address")),
                 ("Người đại diện", row.get("representative_name")), ("Điện thoại", row.get("phone")),
+                ("Email", row.get("email")),
                 ("Xã/phường", row.get("unit_name")), ("Nhóm sản phẩm", row.get("product_group")),
                 ("Hạng sao hiện tại", f"{rank} sao" if rank else ""),
                 ("Ngày công nhận gần nhất", row.get("latest_recognition_date")),
@@ -759,7 +787,7 @@ class _Pages:
             who = log.get("user_name") or log.get("reviewer_name") or log.get("reviewer_username") or log.get("username") or ""
             items.append(
                 '<li><div class="ocop-history-top"><strong>' + self.e(REVIEW_LABELS.get(action, action))
-                + '</strong><time>' + self.e(log.get("created_at")) + "</time></div>"
+                + '</strong><time>' + self.e(format_ocop_date(log.get("created_at"))) + "</time></div>"
                 + '<div class="muted">' + self.e(who) + '</div><div class="ocop-preserve">'
                 + self.e(log.get("comment", "")) + "</div></li>"
             )
