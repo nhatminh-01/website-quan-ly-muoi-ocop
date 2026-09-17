@@ -122,15 +122,16 @@
   const sidebarFooter = document.querySelector('.sidebar-footer p');
   if (sidebarFooter) sidebarFooter.textContent = 'Quản lý tập trung dữ liệu Diêm nghiệp và OCOP.';
 
-  // OCOP has one data-entry workflow in the sidebar. Excel import and direct entry
-  // remain separate methods inside the destination page, not separate menu items.
+  // OCOP exposes one "Nhập dữ liệu" item. The destination page lets users
+  // choose Excel import or direct entry. Keep it above expiry alerts.
   const ocopLinks = sidebar?.querySelector('.sidebar-group[data-group="ocop"] .sidebar-group-links');
   if (ocopLinks) {
     const importLink = ocopLinks.querySelector('a[href="/ocop/import"]');
     const manualLink = ocopLinks.querySelector('a[href="/ocop/manual"]');
     const expiryLink = ocopLinks.querySelector('a[href="/ocop/expiry-alerts"]');
-    if (importLink && manualLink && expiryLink) {
-      const dataEntryLink = manualLink.cloneNode(true);
+    const sourceLink = manualLink || importLink;
+    if (sourceLink && expiryLink) {
+      const dataEntryLink = sourceLink.cloneNode(true);
       dataEntryLink.href = '/ocop/manual';
       dataEntryLink.title = 'Nhập dữ liệu';
       const label = dataEntryLink.querySelector('.sidebar-label');
@@ -139,8 +140,8 @@
       dataEntryLink.classList.toggle('active', active);
       if (active) dataEntryLink.setAttribute('aria-current', 'page');
       else dataEntryLink.removeAttribute('aria-current');
-      importLink.remove();
-      manualLink.remove();
+      importLink?.remove();
+      manualLink?.remove();
       ocopLinks.insertBefore(dataEntryLink, expiryLink);
     }
   }
