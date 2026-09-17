@@ -78,7 +78,7 @@ def _bounded(value, label, maximum=255, required=False):
 
 
 def _integer(value, label, minimum, maximum):
-    if isinstance(value, bool) or not re.fullmatch(r"[0-9]+", str(value or "")):
+    if isinstance(value, bool) or not re.fullmatch(r"[0-9]{1,10}", str(value or "")):
         raise RegistryError(f"{label}: phải là số nguyên.")
     number = int(value)
     if not minimum <= number <= maximum:
@@ -95,17 +95,17 @@ def _date(value, label):
         raise RegistryError(f"{label}: ngày không hợp lệ.") from None
 
 
-def validate_payload(payload, *, manual=False):
+def validate_payload(payload, *, manual=False, append_existing=False):
     """Validate a canonical payload independently of its HTTP/Excel transport."""
     payload = deepcopy(payload)
     entity, product = payload["entity"], payload["product"]
     for field, label, limit, required in (
-        ("name", "Tên chủ thể", 255, True), ("business_type", "Loại hình", 100, manual),
+        ("name", "Tên chủ thể", 255, True), ("business_type", "Loại hình", 100, manual and not append_existing),
         ("address", "Địa chỉ", 255, False), ("representative_name", "Người đại diện", 255, False),
         ("phone", "Điện thoại", 50, False), ("email", "Email", 254, False),
     ):
         entity[field] = _bounded(entity.get(field), label, limit, required)
-    if manual and entity["business_type"] not in BUSINESS_TYPES:
+    if manual and not append_existing and entity["business_type"] not in BUSINESS_TYPES:
         raise RegistryError("Vui lòng chọn loại hình chủ thể trong danh sách.")
     if entity["email"] and not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", entity["email"]):
         raise RegistryError("Email chủ thể không hợp lệ.")
@@ -293,7 +293,7 @@ def publish(con, session, payload, *, source="excel", batch_id=None, source_row=
         if source not in ("excel", "manual"):
             raise RegistryError("Nguồn dữ liệu OCOP không hợp lệ.")
         require_internal(con, session)
-        payload = validate_payload(payload, manual=source == "manual")
+        payload = validate_payload(payload, manual=source == "manual", append_existing=bool(append_product_id))
         entity, product = payload["entity"], payload["product"]
         unit = con.execute("""SELECT TenDonVi,TinhTrang,CapHanhChinh FROM DM_DonViHanhChinh
             WHERE Ma_DonViHanhChinh=? FOR SHARE""", (entity["unit_code"],)).fetchone()
@@ -328,12 +328,12 @@ def publish(con, session, payload, *, source="excel", batch_id=None, source_row=
         _publish_qd5277(con, entity, product, current)
         if source == "manual":
             if not existing_entity:
-                _audit(con, session, MANUAL_ENTITY_CREATE, "Tạo chủ thể OCOP trực tiếp", "entity", entity_id, metadata)
+                _audit(con, session, MANUAL_ENTITY_CREATE, f"Tạo chủ thể OCOP trực tiếp (mã {entity['ma_co_so']})", "entity", entity_id, metadata)
             if not existing_product:
-                _audit(con, session, MANUAL_PRODUCT_CREATE, "Tạo sản phẩm OCOP trực tiếp", "product", product_id, metadata)
+                _audit(con, session, MANUAL_PRODUCT_CREATE, f"Tạo sản phẩm OCOP trực tiếp (mã {product['ma_san_pham']})", "product", product_id, metadata)
             for recognition_id, row in added:
                 _audit(con, session, MANUAL_RECOGNITION_CREATE,
-                       f"Thêm lần công nhận {row['star_rank']} sao năm {row['recognition_year']}", "recognition", recognition_id, metadata)
+                       f"Thêm lần công nhận {row['star_rank']} sao năm {row['recognition_year']} (sản phẩm {product['ma_san_pham']})", "recognition", recognition_id, metadata)
             if existing_product:
                 _audit(con, session, MANUAL_UPDATE, "Bổ sung lịch sử công nhận OCOP", "product", product_id, metadata)
         return {"product_id": product_id, "entity_id": entity_id, "current_recognition_id": current}

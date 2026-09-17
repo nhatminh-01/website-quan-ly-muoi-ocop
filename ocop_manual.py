@@ -118,7 +118,10 @@ def page(con, session, csrf, query="", data=None, error=None):
     except registry.RegistryError:
         recognitions = [{}]
     entity_fields = _input(data, "entity_name", "Tên chủ thể", required=True, readonly=readonly)
-    entity_fields += _select(data, "business_type", "Loại hình chủ thể", [(item, item) for item in registry.BUSINESS_TYPES], readonly)
+    if readonly and data.get("business_type") not in registry.BUSINESS_TYPES:
+        entity_fields += _input(data, "business_type", "Loại hình chủ thể hiện có", readonly=True)
+    else:
+        entity_fields += _select(data, "business_type", "Loại hình chủ thể", [(item, item) for item in registry.BUSINESS_TYPES], readonly)
     entity_fields += _select(data, "unit_code", "Xã/phường", [(u["code"], u["name"]) for u in units], readonly)
     for name, label, limit, kind in (("address", "Địa chỉ", 255, "text"), ("representative_name", "Người đại diện", 255, "text"),
                                      ("phone", "Điện thoại chủ thể", 50, "tel"), ("email", "Email chủ thể", 254, "email")):

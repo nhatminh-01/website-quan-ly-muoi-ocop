@@ -220,6 +220,17 @@ class ManualPostgreSQLTests(unittest.TestCase):
             ocop_manual.save(self.con, self.session, form())
         self.assertEqual(self.count("app.ocop_entities"), 0)
 
+    def test_append_keeps_legacy_subject_type_without_blocking_recognition(self):
+        first = ocop_manual.save(self.con, self.session, form())
+        self.con.execute("UPDATE DM_CoSo SET LoaiCoSo='Công ty cổ phần' WHERE Ma_CoSo=(SELECT ma_co_so FROM app.ocop_products WHERE id=?)", (first["product_id"],))
+        self.con.commit()
+        page = self.staff.request("GET", f'/ocop/manual?product_id={first["product_id"]}')
+        self.assertEqual(page[0], 200)
+        self.assertIn("Công ty cổ phần", page[2])
+        ocop_manual.save(self.con, self.session, next_recognition(append_product_id=str(first["product_id"]), business_type="Công ty cổ phần"))
+        self.assertEqual(self.count("app.ocop_recognitions"), 2)
+        self.assertEqual(self.con.execute("SELECT LoaiCoSo FROM DM_CoSo WHERE Ma_CoSo=(SELECT ma_co_so FROM app.ocop_products WHERE id=?)", (first["product_id"],)).fetchone()[0], "Công ty cổ phần")
+
     def test_multiple_recognitions_choose_latest_and_keep_older_history(self):
         data = next_recognition()
         for field in ocop_manual.RECOGNITION_FIELDS:

@@ -43,7 +43,10 @@ class ManualBrowserTests(unittest.TestCase):
                 expect(page.locator('[data-recognition]')).to_have_count(2)
                 for width in (1366, 760, 390, 320):
                     page.set_viewport_size({"width":width, "height":900})
-                    self.assertTrue(page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
+                    overflow = page.evaluate("""() => [...document.querySelectorAll('body *')]
+                      .filter(e => e.getBoundingClientRect().right > innerWidth + 1)
+                      .map(e => ({tag:e.tagName, cls:e.className, right:e.getBoundingClientRect().right})).slice(0,12)""")
+                    self.assertTrue(page.evaluate("document.documentElement.scrollWidth <= innerWidth"), f"viewport={width}: {overflow}")
                     self.assertEqual(page.locator('[name="recognition_1_star_rank"]').input_value(), "4")
                 page.get_by_role("button", name="Lưu dữ liệu", exact=True).click()
                 expect(page.get_by_role("status")).to_have_text("Đã lưu dữ liệu OCOP thành công.")
