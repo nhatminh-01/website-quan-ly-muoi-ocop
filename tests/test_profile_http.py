@@ -85,7 +85,6 @@ class ProfileHeaderTests(unittest.TestCase):
             page = Page(self.render({"full_name": name}))
             self.assertEqual(page.by_class("account-name")[0]["text"], name)
             self.assertEqual(page.by_class("account-avatar")[0]["text"], name[0].upper())
-            # Only the trusted account-menu script may be inline; user text must not create a script node.
             scripts = [node for node in page.nodes if node["tag"] == "script" and not node["attrs"].get("src")]
             self.assertEqual(len(scripts), 1)
             self.assertEqual(scripts[0]["attrs"].get("id"), "account-menu-script")
@@ -235,7 +234,12 @@ class ProfileHTTPTests(unittest.TestCase):
 
     def test_phone_value_is_preserved_but_no_longer_editable(self):
         with self.connection() as con:
-            con.execute("UPDATE app.user_profiles SET phone='0901234567' WHERE user_id=%s", (self.ids["profile_staff"],))
+            con.execute(
+                """INSERT INTO app.user_profiles(user_id,phone,agency_name)
+                   VALUES(%s,'0901234567',%s)
+                   ON CONFLICT(user_id) DO UPDATE SET phone=EXCLUDED.phone""",
+                (self.ids["profile_staff"], user_profiles.CHI_CUC_AGENCY_NAME),
+            )
         self.assertEqual(self.staff.request("POST", "/profile", {
             "full_name": "Nhân viên", "department": user_profiles.STAFF_DEPARTMENTS[0], "official_email": "nv@example.gov.vn",
         })[0], 303)
@@ -250,6 +254,11 @@ class ProfileHTTPTests(unittest.TestCase):
         self.assertEqual(self.admin.request("POST", "/users/new", {**data, "official_email":"minh@example.gov.vn"})[0], 303)
         client = Client(self.http.server_address[1]).login("new_staff")
         self.assertEqual(Page(client.request("GET", "/profile")[2]).by_class("account-name")[0]["text"], data["full_name"])
+        self.assertEqual(self.admin.request("POST", "/users/new", {
+            "username":"missing_department", "password":"Profile-test-2026", "role":"staff", "full_name":"Thiếu phòng"
+        })[0], 400)
+        with self.connection() as con:
+            self.assertEqual(con.execute("SELECT COUNT(*) FROM app.users WHERE username='missing_department'").fetchone()[0], 0)
         before = self.account("profile_staff")
         self.assertEqual(self.admin.request("POST", f'/users/{self.ids["profile_staff"]}/edit', {
             "username":"must_rollback", "role":"staff", "active":"1", "full_name":"A", "department":user_profiles.STAFF_DEPARTMENTS[0], "official_email":"invalid",
