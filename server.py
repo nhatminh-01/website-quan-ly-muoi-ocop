@@ -651,9 +651,8 @@ def base_page(title, body, session=None, active_path=None):
             system_items.append(("/admin-units", "location", "Danh mục đơn vị hành chính"))
         system_items.extend([("/change-password", "key", "Đổi mật khẩu"),
                              ("/logout", "logout", "Đăng xuất")])
-        # Dashboard is already the page-level home; keep it out of the
-        # sidebar groups so users do not see two consecutive "Trang chủ"
-        # labels while retaining the brand link as a quick route home.
+        # Keep the dashboard as a standalone home link so it is always easy
+        # to reach without adding it to either business group.
         nav_groups = [("DIÊM NGHIỆP", salt_items)]
         if ocop_available():
             ocop_items = [("/ocop", "table", "Tra cứu / Xuất báo cáo"),
@@ -663,7 +662,12 @@ def base_page(title, body, session=None, active_path=None):
                 ocop_items.append(("/ocop/manual", "edit", "Nhập dữ liệu trực tiếp"))
             nav_groups.append(("OCOP", ocop_items))
         nav_groups.append(("HỆ THỐNG", system_items))
-        nav = [sidebar_group(group, items, current) for group, items in nav_groups]
+        home_active = current == "/dashboard"
+        home_link = (f'<a class="sidebar-link sidebar-home-link{" active" if home_active else ""}" '
+                     'href="/dashboard" title="Bảng giám sát"'
+                     + (' aria-current="page"' if home_active else '')
+                     + f'>{icon("home")}<span class="sidebar-label">Bảng giám sát</span></a>')
+        nav = [home_link] + [sidebar_group(group, items, current) for group, items in nav_groups]
         name = account_display_name(session)
         display_label = esc(name)
         if name == "CHI CỤC PHÁT TRIỂN NÔNG THÔN THÀNH PHỐ HỒ CHÍ MINH":

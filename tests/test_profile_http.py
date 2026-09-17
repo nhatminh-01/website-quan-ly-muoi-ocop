@@ -111,6 +111,16 @@ class ProfileHeaderTests(unittest.TestCase):
             css,
         )
 
+    def test_sidebar_has_explicit_dashboard_home_link(self):
+        session = {"username": "staff_test", "role": "staff", "unit_name": "Chi cục"}
+        with patch.object(server, "ocop_available", return_value=False):
+            page = Page(server.base_page("Tổng quan", "", session))
+        home_links = [node for node in page.by_class("sidebar-link") if node["attrs"].get("href") == "/dashboard"]
+        self.assertEqual(len(home_links), 1)
+        self.assertEqual(home_links[0]["attrs"].get("title"), "Bảng giám sát")
+        self.assertEqual(home_links[0]["attrs"].get("aria-current"), "page")
+        self.assertIn("Bảng giám sát", home_links[0]["text"])
+
     def test_legacy_unit_header_does_not_offer_personal_profile(self):
         session = {"username": "old_unit", "role": "unit", "unit_name": "Xã cũ"}
         with patch.object(server, "ocop_available", return_value=False):
