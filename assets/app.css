@@ -373,4 +373,9 @@ body.sidebar-collapsed{--sidebar-width:78px}
 .ocop-contact a{overflow-wrap:anywhere}
 .ocop-contact-sub{display:block;color:var(--muted);font-size:12px;line-height:1.4}
 .ocop-contact-empty{display:block;color:var(--muted);font-size:13px;line-height:1.45}
+.ocop-contact-warning{display:inline-flex;width:max-content;padding:2px 6px;border-radius:999px;background:#fff1d6;color:#9a5f05;font-size:11px;font-weight:700}
+.ocop-expiry-band{display:inline-block;margin-top:5px;padding:3px 7px;border-radius:999px;font-size:11px;font-weight:700;line-height:1.2}
+.ocop-expiry-band.critical{background:#fde7e7;color:#a33a3a}
+.ocop-expiry-band.soon{background:#fff1d6;color:#9a5f05}
+.ocop-expiry-band.later{background:#e8f1fb;color:#315f8c}
 @media(max-width:760px){.module-alert{align-items:flex-start;flex-direction:column}.module-alert .btn{align-self:flex-start}.ocop-expiry-table{min-width:1000px}}

@@ -435,9 +435,9 @@ def _ocop_expiry_query(con, session, status=None, filters=None):
         where.append("expiry.has_contact=FALSE")
     remaining = _text(filters, "remaining", 20)
     remaining_clauses = {
-        "today": "expiry.expiry_date=CURRENT_DATE",
-        "month": "expiry.expiry_date<=CURRENT_DATE + INTERVAL '1 month'",
-        "over_month": "expiry.expiry_date>CURRENT_DATE + INTERVAL '1 month'",
+        "up_to_30": "expiry.days_remaining BETWEEN 0 AND 30",
+        "31_60": "expiry.days_remaining BETWEEN 31 AND 60",
+        "over_60": "expiry.days_remaining>60",
     }
     if remaining and remaining not in remaining_clauses:
         raise OcopError("Bộ lọc thời gian còn lại không hợp lệ.")

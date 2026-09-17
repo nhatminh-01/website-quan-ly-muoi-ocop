@@ -63,6 +63,19 @@ def _phone_href(value):
     return normalized if re.fullmatch(r"\+?\d{6,20}", normalized) else ""
 
 
+def _expiry_band(days):
+    """Return presentation metadata for an expiring product row."""
+    try:
+        days = int(days)
+    except (TypeError, ValueError):
+        return "", ""
+    if days <= 30:
+        return "critical", "≤ 30 ngày"
+    if days <= 60:
+        return "soon", "31–60 ngày"
+    return "later", "> 60 ngày"
+
+
 def _filters(query):
     if isinstance(query, dict):
         values = query
@@ -307,23 +320,29 @@ class _Pages:
         return self.wrap("Tra cứu OCOP", "Tra cứu sản phẩm theo địa bàn, chủ thể, nhóm sản phẩm và hạng sao.", content, actions)
 
     def contact_markup(self, row):
-        if not row.get("has_contact"):
-            return '<span class="ocop-contact-empty">Chưa có thông tin liên hệ</span>'
         parts = []
         representative = str(row.get("representative_name") or "").strip()
-        if representative:
-            parts.append('<span><b>Đại diện:</b> ' + self.e(representative) + '</span>')
+        parts.append(
+            '<span><b>Người đại diện:</b> '
+            + (self.e(representative) if representative else "Chưa cập nhật")
+            + '</span>'
+        )
         phone = str(row.get("phone") or "").strip()
         if phone:
             phone_href = _phone_href(phone)
             phone_html = self.e(phone)
             if phone_href:
                 phone_html = '<a href="' + self.e("tel:" + phone_href) + '">' + phone_html + '</a>'
-            parts.append('<span><b>Điện thoại:</b> ' + phone_html + '</span>')
+        else:
+            phone_html = "Chưa cập nhật"
+        parts.append('<span><b>Số điện thoại:</b> ' + phone_html + '</span>')
         email = str(row.get("email") or "").strip()
         if email:
             email_href = quote(email, safe="@._+-")
             parts.append('<span><b>Email:</b> <a href="' + self.e("mailto:" + email_href) + '">' + self.e(email) + '</a></span>')
+        if not row.get("has_contact"):
+            parts.append('<span class="ocop-contact-warning">Thiếu thông tin liên hệ</span>')
+            parts.append('<span class="ocop-contact-empty">Chưa có thông tin liên hệ</span>')
         return '<div class="ocop-contact">' + ''.join(parts) + '</div>'
 
     def expiry_alerts(self):
@@ -338,9 +357,9 @@ class _Pages:
             + self.select("star", "Hạng sao", [("3", "3 sao"), ("4", "4 sao"), ("5", "5 sao")],
                           f.get("star", ""), empty="Tất cả hạng")
             + self.select("remaining", "Mức thời gian còn lại", [
-                ("today", "Hôm nay"),
-                ("month", "Trong 1 tháng tới"),
-                ("over_month", "Trên 1 tháng, trong 3 tháng"),
+                ("up_to_30", "≤ 30 ngày"),
+                ("31_60", "31–60 ngày"),
+                ("over_60", "> 60 ngày đến 3 tháng"),
             ], f.get("remaining", ""), empty="Tất cả trong 3 tháng")
             + self.select("contact", "Thông tin liên hệ", [
                 ("has", "Có thông tin liên hệ"),
@@ -373,7 +392,12 @@ class _Pages:
                 days = int(days) if days is not None else None
             except (TypeError, ValueError):
                 days = None
-            days_label = "—" if days is None else ("Hôm nay" if days == 0 else f"Còn {days} ngày")
+            days_label = "Chưa xác định" if days is None else f"Còn {days} ngày"
+            band_class, band_label = _expiry_band(days)
+            band_html = (
+                '<span class="ocop-expiry-band ' + self.e(band_class) + '">'
+                + self.e(band_label) + '</span>'
+            ) if band_label else ''
             expiry = row.get("expiry_date")
             if isinstance(expiry, date):
                 expiry_label = expiry.strftime("%d/%m/%Y")
@@ -381,7 +405,7 @@ class _Pages:
                 expiry_label = str(expiry or "—")
             rendered.append(
                 '<tr>'
-                '<td><strong>' + self.e(days_label) + '</strong></td>'
+                '<td><strong>' + self.e(days_label) + '</strong>' + band_html + '</td>'
                 '<td>' + product_cell + '</td>'
                 '<td>' + self.e((str(row.get("star_rank")) + " sao") if row.get("star_rank") else "—") + '</td>'
                 '<td>' + self.e(expiry_label) + '</td>'

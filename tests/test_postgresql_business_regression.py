@@ -304,6 +304,10 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
                 con, admin_id, "BOUNDARY", "27595", boundary, 5,
                 representative="   ", phone="", email=""
             )
+            product_ids["middle"] = self.add_ocop_product(
+                con, admin_id, "MIDDLE", "27595", today + timedelta(days=45), 4,
+                representative="", phone="", email="middle@example.com"
+            )
             product_ids["valid"] = self.add_ocop_product(
                 con, admin_id, "VALID", "27595", boundary + timedelta(days=1), 3,
                 representative="", phone="", email="test@example.com"
@@ -341,20 +345,26 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
 
             summary = ocop_services.get_ocop_expiry_summary(con, session)
             self.assertEqual(summary, {
-                "total_products": 8,
+                "total_products": 9,
                 "valid_products": 1,
-                "expiring_products": 5,
+                "expiring_products": 6,
                 "expired_products": 1,
                 "missing_expiry": 1,
                 "star_3": 3,
-                "star_4": 2,
+                "star_4": 3,
                 "star_5": 3,
-                "total_entities": 7,
+                "total_entities": 8,
             })
+            self.assertEqual(
+                [row["expiry_date"] for row in ocop_services.get_expiring_ocop_products(con, session)],
+                sorted(row["expiry_date"] for row in ocop_services.get_expiring_ocop_products(con, session)),
+            )
             expiring = ocop_services.get_expiring_ocop_products(con, session)
+            self.assertTrue(all(row["expiry_status"] == "expiring" for row in expiring))
             self.assertEqual({row["product_id"] for row in expiring}, {
                 product_ids["today"], product_ids["month"],
-                product_ids["boundary"], product_ids["renewed"], product_ids["no_entity"],
+                product_ids["middle"], product_ids["boundary"],
+                product_ids["renewed"], product_ids["no_entity"],
             })
             self.assertTrue(next(row for row in expiring if row["product_id"] == product_ids["today"])["has_contact"])
             self.assertTrue(next(row for row in expiring if row["product_id"] == product_ids["month"])["has_contact"])
@@ -380,14 +390,52 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
                 con, session, {"contact": "none"}
             )
             self.assertEqual({row["product_id"] for row in has_contact}, {
-                product_ids["today"], product_ids["month"], product_ids["renewed"],
+                product_ids["today"], product_ids["month"],
+                product_ids["middle"], product_ids["renewed"],
             })
             self.assertEqual({row["product_id"] for row in no_contact}, {
                 product_ids["boundary"], product_ids["no_entity"],
             })
-            self.assertEqual(ocop_services.get_expiring_ocop_count(con, session), 5)
-            self.assertEqual(ocop_services.get_expiring_ocop_count(con, session, {"contact": "has"}), 3)
+            self.assertEqual(ocop_services.get_expiring_ocop_count(con, session), 6)
+            self.assertEqual(ocop_services.get_expiring_ocop_count(con, session, {"contact": "has"}), 4)
             self.assertEqual(ocop_services.get_expiring_ocop_count(con, session, {"contact": "none"}), 2)
+            self.assertEqual(
+                {row["product_id"] for row in ocop_services.get_expiring_ocop_products(
+                    con, session, {"star": "4"}
+                )},
+                {product_ids["month"], product_ids["middle"]},
+            )
+            self.assertEqual(
+                {row["product_id"] for row in ocop_services.get_expiring_ocop_products(
+                    con, session, {"q": "TODAY"}
+                )},
+                {product_ids["today"]},
+            )
+            self.assertEqual(
+                {row["product_id"] for row in ocop_services.get_expiring_ocop_products(
+                    con, session, {"q": "Chủ thể MONTH"}
+                )},
+                {product_ids["month"]},
+            )
+            self.assertEqual(
+                {row["product_id"] for row in ocop_services.get_expiring_ocop_products(
+                    con, session, {"remaining": "up_to_30"}
+                )},
+                {product_ids["today"], product_ids["month"],
+                 product_ids["renewed"], product_ids["no_entity"]},
+            )
+            self.assertEqual(
+                {row["product_id"] for row in ocop_services.get_expiring_ocop_products(
+                    con, session, {"remaining": "31_60"}
+                )},
+                {product_ids["middle"]},
+            )
+            self.assertEqual(
+                {row["product_id"] for row in ocop_services.get_expiring_ocop_products(
+                    con, session, {"remaining": "over_60"}
+                )},
+                {product_ids["boundary"]},
+            )
 
             title, html = ocop_pages.render(
                 "/ocop/expiry-alerts", "", session, con,
@@ -396,8 +444,15 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
             self.assertEqual(title, "Cảnh báo hết hạn OCOP")
             self.assertIn("Đầu mối liên hệ", html)
             self.assertIn("Chưa có thông tin liên hệ", html)
+            self.assertIn("Thiếu thông tin liên hệ", html)
+            self.assertIn("Chưa cập nhật", html)
             self.assertIn("Sản phẩm TODAY", html)
             self.assertIn("tel:0909000000", html)
+            self.assertIn("mailto:middle@example.com", html)
+            self.assertIn('/ocop/products/' + str(product_ids["today"]), html)
+            self.assertIn('ocop-expiry-band critical', html)
+            self.assertIn('ocop-expiry-band soon', html)
+            self.assertIn('ocop-expiry-band later', html)
 
             with patch.object(server, "ocop_available", return_value=True), \
                     patch.object(server, "db_conn", return_value=con):
@@ -420,6 +475,10 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
             con.commit()
 
             self.assertEqual(ocop_services.get_expiring_ocop_count(con, admin_session), 2)
+            filtered_rows = ocop_services.get_expiring_ocop_products(
+                con, admin_session, {"unit": "27595"}
+            )
+            self.assertEqual([row["product_id"] for row in filtered_rows], [own_product])
             scoped_rows = ocop_services.get_expiring_ocop_products(con, unit_session)
             self.assertEqual([row["product_id"] for row in scoped_rows], [own_product])
             self.assertNotIn(other_product, {row["product_id"] for row in scoped_rows})
