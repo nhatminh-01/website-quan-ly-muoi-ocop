@@ -11,23 +11,19 @@ import hashlib
 import io
 import json
 import re
-import unicodedata
 
 from permissions import is_chi_cuc_user
+import ocop_registry
 
 
-class OcopImportError(ValueError):
-    pass
+OcopImportError = ocop_registry.RegistryError
 
 
 DEFAULT_SHEET = "Loc"
 MAX_FILE_BYTES = 20 * 1024 * 1024
 
 
-def _text(value) -> str:
-    if value is None:
-        return ""
-    return " ".join(unicodedata.normalize("NFC", str(value)).split()).strip()
+_text = ocop_registry.text
 
 
 _EXCEL_ERROR_VALUES = {"#REF!", "#DIV/0!", "#VALUE!", "#N/A", "#NAME?", "#NUM!", "#NULL!"}
@@ -45,8 +41,7 @@ def _context_text(value) -> str:
     return "" if text.upper() in _EXCEL_ERROR_VALUES else text
 
 
-def _key(value) -> str:
-    return _text(value).casefold()
+_key = ocop_registry.key
 
 
 def _json_value(value):
@@ -116,13 +111,8 @@ def _date_value(value, label: str, errors: list[str], *, required=False):
     return None
 
 
-def _stable_code(prefix: str, natural_key: str) -> str:
-    return prefix + hashlib.sha256(natural_key.encode("utf-8")).hexdigest()[:8].upper()
-
-
-def _source_key(*parts) -> str:
-    token = "\x1f".join(_key(part) for part in parts)
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+_stable_code = ocop_registry.stable_code
+_source_key = ocop_registry.source_key
 
 
 def _lookup_unit(source_name: str, unit_lookup):
@@ -407,159 +397,6 @@ def _assert_publishable(preview):
         )
 
 
-def _revalidate_unit(con, entity):
-    row = con.execute(
-        """SELECT Ma_DonViHanhChinh,TenDonVi,TinhTrang,CapHanhChinh
-           FROM DM_DonViHanhChinh WHERE Ma_DonViHanhChinh=? FOR SHARE""",
-        (entity["unit_code"],),
-    ).fetchone()
-    if (not row or not row["TinhTrang"] or row["CapHanhChinh"] not in ("xa", "phuong")
-            or row["TenDonVi"] != entity["unit_name"]):
-        raise OcopImportError("Danh mục hành chính đã thay đổi. Hãy tải lại file để kiểm tra.")
-
-
-def _ensure_entity(con, session, entity):
-    _revalidate_unit(con, entity)
-    occupied = con.execute("SELECT TenCoSo,Ma_DonViHanhChinh FROM DM_CoSo WHERE Ma_CoSo=?", (entity["ma_co_so"],)).fetchone()
-    if occupied and (occupied["TenCoSo"] != entity["name"] or occupied["Ma_DonViHanhChinh"] != entity["unit_code"]):
-        raise OcopImportError(f"Xung đột mã chủ thể sinh tự động {entity['ma_co_so']}; dừng để kiểm tra.")
-    con.execute(
-        """INSERT INTO DM_CoSo(Ma_CoSo,TenCoSo,LoaiCoSo,DiaChi,Ma_DonViHanhChinh)
-           VALUES(?,?,?,?,?)
-           ON CONFLICT(Ma_CoSo) DO UPDATE SET
-             TenCoSo=excluded.TenCoSo,
-             LoaiCoSo=CASE WHEN excluded.LoaiCoSo<>'' THEN excluded.LoaiCoSo ELSE DM_CoSo.LoaiCoSo END,
-             DiaChi=CASE WHEN excluded.DiaChi<>'' THEN excluded.DiaChi ELSE DM_CoSo.DiaChi END,
-             Ma_DonViHanhChinh=excluded.Ma_DonViHanhChinh""",
-        (entity["ma_co_so"], entity["name"], entity["business_type"], entity["address"], entity["unit_code"]),
-    )
-    existing = con.execute(
-        "SELECT id,source_key FROM ocop_entities WHERE ma_co_so=? OR source_key=? ORDER BY id LIMIT 1",
-        (entity["ma_co_so"], entity["source_key"]),
-    ).fetchone()
-    now = datetime.now().isoformat(timespec="seconds")
-    if existing:
-        con.execute(
-            """UPDATE ocop_entities SET source_key=?,
-                 representative_name=CASE WHEN ?<>'' THEN ? ELSE representative_name END,
-                 phone=CASE WHEN ?<>'' THEN ? ELSE phone END,
-                 updated_at=?
-               WHERE id=?""",
-            (entity["source_key"], entity["representative_name"], entity["representative_name"],
-             entity["phone"], entity["phone"], now, existing["id"]),
-        )
-        return existing["id"]
-    return con.execute(
-        """INSERT INTO ocop_entities
-           (ma_co_so,representative_name,phone,email,tax_code,website,description,created_by,created_at,updated_at,source_key)
-           VALUES(?,?,?,'','','','Import dữ liệu OCOP lịch sử',?,?,?,?)""",
-        (entity["ma_co_so"], entity["representative_name"], entity["phone"],
-         session["user_id"], now, now, entity["source_key"]),
-    ).lastrowid
-
-
-def _ensure_product(con, session, entity, product):
-    occupied = con.execute("SELECT TenSanPham FROM DM_SanPham WHERE Ma_SanPham=?", (product["ma_san_pham"],)).fetchone()
-    if occupied and occupied["TenSanPham"] != product["name"]:
-        raise OcopImportError(f"Xung đột mã sản phẩm sinh tự động {product['ma_san_pham']}; dừng để kiểm tra.")
-    con.execute(
-        """INSERT INTO DM_SanPham(Ma_SanPham,TenSanPham,NhomSanPham,DonViTinh,TrangThai)
-           VALUES(?,?,?,NULL,TRUE)
-           ON CONFLICT(Ma_SanPham) DO UPDATE SET
-             TenSanPham=excluded.TenSanPham,NhomSanPham=excluded.NhomSanPham,TrangThai=TRUE""",
-        (product["ma_san_pham"], product["name"], product["group"]),
-    )
-    existing = con.execute(
-        "SELECT id FROM ocop_products WHERE ma_san_pham=? OR source_key=? ORDER BY id LIMIT 1",
-        (product["ma_san_pham"], product["source_key"]),
-    ).fetchone()
-    now = datetime.now().isoformat(timespec="seconds")
-    if existing:
-        con.execute(
-            """UPDATE ocop_products SET ma_co_so=?,ma_don_vi_hanh_chinh=?,ten_san_pham=?,product_group=?,
-                 current_star=?,status='active',updated_at=?,source_key=? WHERE id=?""",
-            (entity["ma_co_so"], entity["unit_code"], product["name"], product["group"],
-             product["current_star"], now, product["source_key"], existing["id"]),
-        )
-        return existing["id"]
-    return con.execute(
-        """INSERT INTO ocop_products
-           (ma_san_pham,ma_co_so,ma_don_vi_hanh_chinh,ten_san_pham,product_group,description,current_star,status,
-            created_by,created_at,updated_at,source_key)
-           VALUES(?,?,?,?,?,'Import dữ liệu OCOP lịch sử',?,'active',?,?,?,?)""",
-        (product["ma_san_pham"], entity["ma_co_so"], entity["unit_code"], product["name"], product["group"],
-         product["current_star"], session["user_id"], now, now, product["source_key"]),
-    ).lastrowid
-
-
-def _upsert_recognitions(con, product_id, product, recognitions, batch_id, source_row):
-    con.execute("UPDATE ocop_recognitions SET is_current=FALSE,updated_at=CURRENT_TIMESTAMP WHERE product_id=?", (product_id,))
-    current_id = None
-    for recognition in recognitions:
-        con.execute(
-            """INSERT INTO ocop_recognitions
-               (product_id,application_id,source_key,recognition_sequence,evaluation_type,star_rank,
-                recognition_date,recognition_year,decision_number,decision_authority,expiry_date,is_current,note,
-                source_batch_id,source_row,created_at,updated_at)
-               VALUES(?,NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
-               ON CONFLICT(source_key) DO UPDATE SET
-                 product_id=excluded.product_id,
-                 recognition_sequence=excluded.recognition_sequence,
-                 evaluation_type=excluded.evaluation_type,
-                 star_rank=excluded.star_rank,
-                 recognition_date=excluded.recognition_date,
-                 recognition_year=excluded.recognition_year,
-                 decision_number=excluded.decision_number,
-                 decision_authority=excluded.decision_authority,
-                 expiry_date=excluded.expiry_date,
-                 is_current=excluded.is_current,
-                 note=excluded.note,
-                 source_batch_id=excluded.source_batch_id,
-                 source_row=excluded.source_row,
-                 updated_at=CURRENT_TIMESTAMP""",
-            (product_id, recognition["source_key"], recognition["recognition_sequence"], recognition["evaluation_type"],
-             recognition["star_rank"], recognition["recognition_date"], recognition["recognition_year"],
-             recognition["decision_number"], recognition["decision_authority"], recognition["expiry_date"],
-             bool(recognition["is_current"]), recognition["note"], batch_id, source_row),
-        )
-        row = con.execute("SELECT id FROM ocop_recognitions WHERE source_key=?", (recognition["source_key"],)).fetchone()
-        if recognition["is_current"]:
-            current_id = row["id"]
-    if current_id is None:
-        raise OcopImportError(f"Sản phẩm {product['name']} không có lần công nhận hiện hành hợp lệ.")
-    return current_id
-
-
-def _publish_qd5277(con, entity, product, current_recognition_id):
-    recognition = con.execute("SELECT * FROM ocop_recognitions WHERE id=?", (current_recognition_id,)).fetchone()
-    year_code = str(recognition["recognition_year"])
-    con.execute(
-        """INSERT INTO DM_KhoangThoiGian(Ma_ThoiGian,Nam,Thang,VuMua)
-           VALUES(?,?,NULL,NULL) ON CONFLICT(Ma_ThoiGian) DO NOTHING""",
-        (year_code, recognition["recognition_year"]),
-    )
-    expiry = recognition["expiry_date"]
-    status = "HETHAN" if expiry and expiry < date.today() else "HIEULUC"
-    if int(current_recognition_id) > 2147483647:
-        raise OcopImportError("Mã lịch sử công nhận vượt phạm vi MA_OCOP INT của QĐ 5277.")
-    con.execute("DELETE FROM PTNT_OCOP WHERE Ma_SanPham=? AND MA_OCOP<>?", (product["ma_san_pham"], int(current_recognition_id)))
-    con.execute(
-        """INSERT INTO PTNT_OCOP
-           (MA_OCOP,Ma_DonViHanhChinh,Ma_ThoiGian,Ma_SanPham,TenSanPham,XepHang,ChuTheSXKD,DoanhThuNam,TrangThai)
-           VALUES(?,?,?,?,?,?,?,NULL,?)
-           ON CONFLICT(MA_OCOP) DO UPDATE SET
-             Ma_DonViHanhChinh=excluded.Ma_DonViHanhChinh,
-             Ma_ThoiGian=excluded.Ma_ThoiGian,
-             Ma_SanPham=excluded.Ma_SanPham,
-             TenSanPham=excluded.TenSanPham,
-             XepHang=excluded.XepHang,
-             ChuTheSXKD=excluded.ChuTheSXKD,
-             TrangThai=excluded.TrangThai""",
-        (int(current_recognition_id), entity["unit_code"], year_code, product["ma_san_pham"], product["name"],
-         f"{recognition['star_rank']}*", entity["name"], status),
-    )
-
-
 def commit_ocop_preview(con, session, preview, mode="publish"):
     """Persist staging rows and optionally publish normalized OCOP history.
 
@@ -617,36 +454,21 @@ def commit_ocop_preview(con, session, preview, mode="publish"):
         )
 
     if mode == "stage_only":
-        con.execute(
-            """INSERT INTO audit_logs(record_id,user_id,action,detail,created_at,module,object_type,object_id)
-               VALUES(NULL,?,'Import OCOP staging',?,CURRENT_TIMESTAMP,'ocop','ocop_import_batch',?)""",
-            (session["user_id"], _json({"batch_id": batch_id, "filename": preview["filename"], "errors": preview["error_rows"]}), str(batch_id)),
-        )
+        ocop_registry._audit(con, session, "Import OCOP staging",
+            f"Lưu staging OCOP: {preview['total_rows']} dòng, {preview['error_rows']} dòng lỗi",
+            "ocop_import_batch", batch_id)
         return {"batch_id": batch_id, "already_published": False, "published_products": 0}
 
     published_products = 0
     for row in preview["rows"]:
         canonical = row["canonical"]
-        entity = canonical["entity"]
-        product = canonical["product"]
-        _ensure_entity(con, session, entity)
-        product_id = _ensure_product(con, session, entity, product)
-        current_id = _upsert_recognitions(
-            con, product_id, product, canonical["recognitions"], batch_id, row["excel_row"]
-        )
-        _publish_qd5277(con, entity, product, current_id)
+        ocop_registry.publish(con, session, canonical, source="excel",
+                              batch_id=batch_id, source_row=row["excel_row"])
         published_products += 1
 
-    con.execute(
-        """INSERT INTO audit_logs(record_id,user_id,action,detail,created_at,module,object_type,object_id)
-           VALUES(NULL,?,'Import OCOP Excel',?,CURRENT_TIMESTAMP,'ocop','ocop_import_batch',?)""",
-        (session["user_id"], _json({
-            "batch_id": batch_id,
-            "filename": preview["filename"],
-            "products": published_products,
-            "recognitions": preview["recognition_count"],
-        }), str(batch_id)),
-    )
+    ocop_registry._audit(con, session, "Import OCOP Excel",
+        f"Import OCOP: {published_products} sản phẩm, {preview['recognition_count']} lần công nhận",
+        "ocop_import_batch", batch_id)
     return {"batch_id": batch_id, "already_published": False, "published_products": published_products}
 
 

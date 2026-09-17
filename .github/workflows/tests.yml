@@ -2,7 +2,7 @@ name: PostgreSQL regression
 on:
   push:
   pull_request:
-    branches: [main]
+    branches: [main, update-v1.1]
 permissions:
   contents: read
 jobs:
@@ -25,6 +25,9 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install -r database/requirements.txt
+      - run: pip install playwright
+      - run: python -m playwright install --with-deps chromium
       - run: python -B -m unittest discover -s tests -v
         env:
           OCOP_TEST_PG_DSN: postgresql://ocop_test:test-only-local-ci@localhost:5432/postgres
+          OCOP_TEST_BROWSER: '1'
