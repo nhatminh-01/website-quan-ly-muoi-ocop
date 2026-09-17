@@ -122,6 +122,29 @@
   const sidebarFooter = document.querySelector('.sidebar-footer p');
   if (sidebarFooter) sidebarFooter.textContent = 'Quản lý tập trung dữ liệu Diêm nghiệp và OCOP.';
 
+  // OCOP has one data-entry workflow in the sidebar. Excel import and direct entry
+  // remain separate methods inside the destination page, not separate menu items.
+  const ocopLinks = sidebar?.querySelector('.sidebar-group[data-group="ocop"] .sidebar-group-links');
+  if (ocopLinks) {
+    const importLink = ocopLinks.querySelector('a[href="/ocop/import"]');
+    const manualLink = ocopLinks.querySelector('a[href="/ocop/manual"]');
+    const expiryLink = ocopLinks.querySelector('a[href="/ocop/expiry-alerts"]');
+    if (importLink && manualLink && expiryLink) {
+      const dataEntryLink = manualLink.cloneNode(true);
+      dataEntryLink.href = '/ocop/manual';
+      dataEntryLink.title = 'Nhập dữ liệu';
+      const label = dataEntryLink.querySelector('.sidebar-label');
+      if (label) label.textContent = 'Nhập dữ liệu';
+      const active = location.pathname === '/ocop/manual' || location.pathname === '/ocop/import';
+      dataEntryLink.classList.toggle('active', active);
+      if (active) dataEntryLink.setAttribute('aria-current', 'page');
+      else dataEntryLink.removeAttribute('aria-current');
+      importLink.remove();
+      manualLink.remove();
+      ocopLinks.insertBefore(dataEntryLink, expiryLink);
+    }
+  }
+
   const usersHeading = [...document.querySelectorAll('.page-head h1')].find(el => el.textContent.trim() === 'Tài khoản đơn vị');
   if (usersHeading) {
     usersHeading.textContent = 'Tài khoản Chi cục';
