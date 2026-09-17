@@ -79,6 +79,13 @@ class Handler(CoreHandler):
         return super().send_response(code, message)
 
     def send_html(self, content, status=200, extra_headers=None):
+        content = content.replace(
+            '<p>Theo dõi sản xuất và tổng hợp báo cáo các đơn vị.</p>',
+            '<p>v1.0</p>',
+        ).replace(
+            '<p>Quản lý tập trung dữ liệu Diêm nghiệp và OCOP.</p>',
+            '<p>v1.0</p>',
+        )
         session = self._profile_session()
         if session and core.is_chi_cuc_user(session):
             try:
