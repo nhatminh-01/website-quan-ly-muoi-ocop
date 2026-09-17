@@ -28,9 +28,10 @@ from backend_db import compat_connect, load_settings, INTEGRITY_ERRORS
 from permissions import (ROLE_ADMIN, ROLE_STAFF, ROLE_UNIT, ROLE_LABELS,
                          is_admin, is_chi_cuc_user, can_manage_users, can_review_records)
 from salt_normalization import sync_methods
-from weekly_import import (WeeklyImportError, detect_weekly_period,
-                           parse_weekly_workbook, commit_weekly_preview,
-                           effective_weekly_dashboard)
+from weekly_import import (
+    WeeklyImportError, detect_weekly_period, parse_weekly_workbook,
+    commit_weekly_preview,
+)
 from workbook_utils import WorkbookInspectionError, inspect_workbook
 import repositories
 import admin_units
@@ -40,6 +41,7 @@ import ocop_import
 import ocop_import_pages
 import ocop_pages
 import ocop_services
+import dashboard_services
 from datetime import datetime, date
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -794,13 +796,14 @@ def landing_page(session):
     """Small home page exposing only the two operational modules."""
     con = db_conn()
     try:
-        salt_batches = con.execute("SELECT COUNT(*) FROM salt_import_batches").fetchone()[0]
-        salt_rows = con.execute("SELECT COUNT(*) FROM salt_weekly_records").fetchone()[0]
-        ocop_entities = con.execute("SELECT COUNT(*) FROM ocop_entities WHERE archived_at IS NULL").fetchone()[0]
-        ocop_products = con.execute("SELECT COUNT(*) FROM ocop_products WHERE status='active'").fetchone()[0]
-        ocop_expiry = ocop_services.get_ocop_expiry_summary(con, session)
+        dashboard = dashboard_services.get_home_dashboard(con, session)
     finally:
         con.close()
+    salt_batches = dashboard["salt"]["import_batches"]
+    salt_rows = dashboard["salt"]["import_rows"]
+    ocop_entities = dashboard["ocop"]["entities"]
+    ocop_products = dashboard["ocop"]["products"]
+    ocop_expiry = dashboard["ocop"]["summary"]
     salt_import_action = '<a class="btn primary" href="/import-excel">Import báo cáo</a>' if is_chi_cuc_user(session) else ''
     ocop_import_action = '<a class="btn primary" href="/ocop/import">Import dữ liệu</a>' if is_chi_cuc_user(session) else ''
     body = f"""
@@ -829,14 +832,16 @@ def landing_page(session):
 def dashboard_page(session, query=""):
     """Legacy salt dashboard kept for compatibility; not linked from UI."""
     """Dashboard for effective weekly records, compared with a distinct earlier week."""
-    official = canonical_admin_unit(session["unit_name"]) if session["role"] == ROLE_UNIT else None
     params = parse_qs(query)
     con = db_conn()
     try:
-        data = effective_weekly_dashboard(
-            con, week=params.get("week", [""])[0].strip(),
-            batch=params.get("batch", [""])[0].strip(),
-            unit_code=(official[1] if official else "") if session["role"] == ROLE_UNIT else None)
+        data = dashboard_services.get_salt_dashboard(
+            con, session, {
+                "week": params.get("week", [""])[0].strip(),
+                "batch": params.get("batch", [""])[0].strip(),
+                "unit": params.get("unit", [""])[0].strip(),
+            }
+        )
     finally:
         con.close()
     if data is None:
@@ -844,16 +849,44 @@ def dashboard_page(session, query=""):
     periods, selected, previous = data["periods"], data["selected"], data["previous"]
     rows, previous_rows = data["rows"], data["previous_rows"]
 
-    def sums(source):
-        return {
-            key: sum(float(row.get(key) or 0) for row in source)
-            for key in ("dien_tich", "san_luong", "sold_total", "remaining_total",
-                        "area_land", "area_tarp", "harvest_land", "harvest_tarp",
-                        "sold_land", "sold_tarp", "remaining_land", "remaining_tarp",
-                        "households", "workers")
-        }
+    current_metrics = data["current_metrics"]
+    previous_metrics = data["previous_metrics"]
+    current_totals = {
+        "dien_tich": current_metrics["area"]["total"],
+        "san_luong": current_metrics["harvest"]["total"],
+        "sold_total": current_metrics["consumption"]["total"],
+        "remaining_total": current_metrics["remaining"]["total"],
+        "area_land": current_metrics["area"]["land"],
+        "area_tarp": current_metrics["area"]["tarp"],
+        "harvest_land": current_metrics["harvest"]["land"],
+        "harvest_tarp": current_metrics["harvest"]["tarp"],
+        "sold_land": current_metrics["consumption"]["land"],
+        "sold_tarp": current_metrics["consumption"]["tarp"],
+        "remaining_land": current_metrics["remaining"]["land"],
+        "remaining_tarp": current_metrics["remaining"]["tarp"],
+        "households": current_metrics["households"]["total"],
+        "workers": current_metrics["workers"]["total"],
+    }
+    previous_totals = {
+        "dien_tich": previous_metrics["area"]["total"],
+        "san_luong": previous_metrics["harvest"]["total"],
+        "sold_total": previous_metrics["consumption"]["total"],
+        "remaining_total": previous_metrics["remaining"]["total"],
+        "area_land": previous_metrics["area"]["land"],
+        "area_tarp": previous_metrics["area"]["tarp"],
+        "harvest_land": previous_metrics["harvest"]["land"],
+        "harvest_tarp": previous_metrics["harvest"]["tarp"],
+        "sold_land": previous_metrics["consumption"]["land"],
+        "sold_tarp": previous_metrics["consumption"]["tarp"],
+        "remaining_land": previous_metrics["remaining"]["land"],
+        "remaining_tarp": previous_metrics["remaining"]["tarp"],
+        "households": previous_metrics["households"]["total"],
+        "workers": previous_metrics["workers"]["total"],
+    }
 
-    current_totals, previous_totals = sums(rows), sums(previous_rows)
+    def display_num(value):
+        return "—" if value is None else fmt_num(value)
+
     period_label = date.fromisoformat(str(selected["report_date"])).strftime("%d/%m/%Y")
     previous_label = (previous["week_code"] + " · " + date.fromisoformat(str(previous["report_date"])).strftime("%d/%m/%Y")
                       if previous else "chưa có kỳ trước")
@@ -861,17 +894,19 @@ def dashboard_page(session, query=""):
     def metric_panel(label, total_key, land_key, tarp_key, unit, symbol, amber=False):
         total = current_totals[total_key]
         before = previous_totals[total_key]
-        difference = total - before
         tone = " amber" if amber else ""
-        if previous:
+        if previous and total is not None and before is not None:
+            difference = total - before
             marker = "+" if difference > 0 else ""
             delta = f'<div class="metric-delta"><strong>{marker}{fmt_num(difference)}</strong> {esc(unit)} so với {esc(previous_label)}</div>'
+        elif previous:
+            delta = '<div class="metric-delta muted">Chưa đủ dữ liệu để so sánh</div>'
         else:
             delta = '<div class="metric-delta muted">Chưa có tuần trước để so sánh</div>'
         return f"""<article class="metric-panel{tone}">
           <div class="metric-top"><h3>{label}</h3>{icon(symbol)}</div>
-          <div class="metric-middle"><div><div class="metric-number">{fmt_num(total)}</div><div class="metric-caption">{unit} · lũy tiến đến {esc(period_label)}</div>{delta}</div><div class="metric-symbol">{icon(symbol)}</div></div>
-          <div class="metric-breakdown"><div><span>Muối đất</span><strong>{fmt_num(current_totals[land_key])} <small>{unit}</small></strong></div><div><span>Muối trải bạt</span><strong>{fmt_num(current_totals[tarp_key])} <small>{unit}</small></strong></div></div>
+          <div class="metric-middle"><div><div class="metric-number">{display_num(total)}</div><div class="metric-caption">{unit} · lũy tiến đến {esc(period_label)}</div>{delta}</div><div class="metric-symbol">{icon(symbol)}</div></div>
+          <div class="metric-breakdown"><div><span>Muối đất</span><strong>{display_num(current_totals[land_key])} <small>{unit}</small></strong></div><div><span>Muối trải bạt</span><strong>{display_num(current_totals[tarp_key])} <small>{unit}</small></strong></div></div>
         </article>"""
 
     metrics = ''.join([
@@ -905,7 +940,7 @@ def dashboard_page(session, query=""):
       <section class="dashboard-panel">
         <div class="panel-heading"><h2 class="panel-title"><span class="panel-title-icon">{icon('chart')}</span>SỐ LIỆU SẢN XUẤT MUỐI</h2><div class="panel-meta">{esc(selected['week_code'])}<br>So sánh với: {esc(previous['week_code']) if previous else 'Chưa có tuần trước'}</div></div>
         <div class="dashboard-metrics">{metrics}</div>
-        <div class="people-metrics"><div class="people-card"><div><div class="label">Số hộ làm muối</div><div class="value">{fmt_num(current_totals['households'])} <small>hộ</small></div></div>{icon('home')}</div><div class="people-card"><div><div class="label">Lao động làm muối</div><div class="value">{fmt_num(current_totals['workers'])} <small>người</small></div></div>{icon('users')}</div></div>
+        <div class="people-metrics"><div class="people-card"><div><div class="label">Số hộ làm muối</div><div class="value">{display_num(current_totals['households'])} <small>hộ</small></div></div>{icon('home')}</div><div class="people-card"><div><div class="label">Lao động làm muối</div><div class="value">{display_num(current_totals['workers'])} <small>người</small></div></div>{icon('users')}</div></div>
         <p class="dashboard-note">Số liệu có hiệu lực của tuần đang chọn. Chênh lệch bằng tuần đang xem trừ tuần có dữ liệu gần nhất trước đó; các lần upload cùng tuần không tạo thêm kỳ so sánh.</p>
       </section>
       <section class="dashboard-panel"><div class="panel-heading"><h2 class="panel-title"><span class="panel-title-icon">{icon('table')}</span>CHI TIẾT THEO ĐƠN VỊ</h2><a class="btn small" href="/salt/weekly?week={selected['week_code']}">Lịch sử Excel của tuần</a></div><div class="table-wrap"><table class="summary-table"><thead><tr><th>Đơn vị</th><th>Diện tích (ha)</th><th>Thu hoạch (tấn)</th><th>Tiêu thụ (tấn)</th><th>Còn lại (tấn)</th><th>Số hộ</th><th>Lao động</th></tr></thead><tbody>{summary_rows}</tbody></table></div></section>

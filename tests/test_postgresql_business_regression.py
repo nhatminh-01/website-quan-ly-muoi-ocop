@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import backend_db
 import admin_units
+import dashboard_services
 import ocop_pages
 import ocop_services
 import permissions
@@ -41,12 +42,14 @@ def _sha(label: str) -> str:
 
 def weekly_preview(*, week: str, report_date: str, sha_label: str,
                    area_land: float, area_tarp: float,
-                   harvest_land: float, harvest_tarp: float):
+                   harvest_land: float, harvest_tarp: float,
+                   unit_name: str = "Xã Tân Nhựt",
+                   unit_code: str = "27595"):
     canonical = {
         "week_code": week,
         "report_date": report_date,
-        "unit_name": "Xã Tân Nhựt",
-        "ma_don_vi_hanh_chinh": "27595",
+        "unit_name": unit_name,
+        "ma_don_vi_hanh_chinh": unit_code,
         "phuong_phap_sx": "Truyền thống",
         "gia_ban_binh_quan": None,
         "dien_tich": area_land + area_tarp,
@@ -79,7 +82,7 @@ def weekly_preview(*, week: str, report_date: str, sha_label: str,
         "report_date": report_date,
         "rows": [{
             "excel_row": 5,
-            "unit_name_raw": "Xã Tân Nhựt",
+            "unit_name_raw": unit_name,
             "status": "valid",
             "errors": [],
             "warnings": [],
@@ -356,6 +359,9 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
                 "total_entities": 8,
             })
             self.assertEqual(
+                dashboard_services.get_ocop_dashboard(con, session), summary
+            )
+            self.assertEqual(
                 [row["expiry_date"] for row in ocop_services.get_expiring_ocop_products(con, session)],
                 sorted(row["expiry_date"] for row in ocop_services.get_expiring_ocop_products(con, session)),
             )
@@ -449,6 +455,10 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
             self.assertIn("Sản phẩm TODAY", html)
             self.assertIn("tel:0909000000", html)
             self.assertIn("mailto:middle@example.com", html)
+            self.assertIn("Thời gian còn lại", html)
+            self.assertIn("Dưới 1 tháng", html)
+            self.assertIn("Dưới 2 tháng", html)
+            self.assertIn("Dưới 3 tháng", html)
             self.assertIn('/ocop/products/' + str(product_ids["today"]), html)
             self.assertIn('ocop-expiry-band critical', html)
             self.assertIn('ocop-expiry-band soon', html)
@@ -545,7 +555,7 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
 
             w35 = weekly_preview(
                 week="2026-W35", report_date="2026-08-28", sha_label="w35",
-                area_land=85, area_tarp=15, harvest_land=720, harvest_tarp=280,
+                area_land=95, area_tarp=15, harvest_land=800, harvest_tarp=300,
             )
             commit_weekly_preview(con, session, w35, "update", "2026-09-11 08:15:00")
             con.commit()
@@ -557,6 +567,67 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
             self.assertEqual(len(dashboard["previous_rows"]), 1)
             self.assertEqual(float(dashboard["rows"][0]["sold_total"]), 15.0)
             self.assertEqual(float(dashboard["rows"][0]["remaining_total"]), 30.0)
+
+            dashboard_model = dashboard_services.get_salt_dashboard(
+                con, session, {"week": "2026-W35"}
+            )
+            self.assertEqual(dashboard_model["current_period"]["week_code"], "2026-W35")
+            self.assertEqual(dashboard_model["previous_period"]["week_code"], "2026-W34")
+            self.assertEqual(dashboard_model["scope"], {
+                "unit_code": None, "unit_name": "Tất cả đơn vị"
+            })
+            self.assertEqual(dashboard_model["current_metrics"]["area"], {
+                "total": 110.0, "land": 95.0, "tarp": 15.0
+            })
+            self.assertEqual(dashboard_model["current_metrics"]["harvest"], {
+                "total": 1100.0, "land": 800.0, "tarp": 300.0
+            })
+            self.assertEqual(dashboard_model["current_metrics"]["consumption"]["total"], 15.0)
+            self.assertEqual(dashboard_model["current_metrics"]["remaining"]["total"], 30.0)
+            self.assertEqual(dashboard_model["current_metrics"]["households"]["total"], 10.0)
+            self.assertEqual(dashboard_model["current_metrics"]["workers"]["total"], 20.0)
+            self.assertEqual(dashboard_model["changes"]["harvest"]["total"], {
+                "previous": 1000.0, "delta": 100.0, "percent_change": 10.0
+            })
+            self.assertEqual(dashboard_model["unit_breakdown"][0]["unit_name"], "Xã Tân Nhựt")
+        finally:
+            con.close()
+
+    def test_salt_dashboard_service_respects_unit_scope(self):
+        con = self.compat()
+        try:
+            admin_id = self.create_user(con, "salt_scope_admin", "admin")
+            unit_id = self.create_user(con, "salt_scope_unit", "unit", "27595")
+            import_session = {"user_id": admin_id, "role": "admin", "unit_name": "Chi cục"}
+            admin_session = {"user_id": admin_id, "role": "admin", "unit_name": "Chi cục"}
+            unit_session = {"user_id": unit_id, "role": "unit", "unit_name": "Xã Tân Nhựt"}
+
+            own = weekly_preview(
+                week="2026-W40", report_date="2026-10-02", sha_label="w40-own",
+                area_land=10, area_tarp=5, harvest_land=100, harvest_tarp=50,
+            )
+            other = weekly_preview(
+                week="2026-W40", report_date="2026-10-02", sha_label="w40-other",
+                area_land=20, area_tarp=10, harvest_land=200, harvest_tarp=100,
+                unit_name="Xã An Thới Đông", unit_code="27673",
+            )
+            commit_weekly_preview(con, import_session, own, "update", "2026-09-11 09:00:00")
+            commit_weekly_preview(con, import_session, other, "update", "2026-09-11 09:01:00")
+            con.commit()
+
+            all_rows = dashboard_services.get_salt_dashboard(
+                con, admin_session, {"week": "2026-W40"}
+            )
+            self.assertEqual(len(all_rows["rows"]), 2)
+            scoped = dashboard_services.get_salt_dashboard(
+                con, unit_session, {"week": "2026-W40"}
+            )
+            self.assertEqual(scoped["scope"]["unit_code"], "27595")
+            self.assertEqual([row["ma_don_vi_hanh_chinh"] for row in scoped["rows"]], ["27595"])
+            selected = dashboard_services.get_salt_dashboard(
+                con, admin_session, {"week": "2026-W40", "unit": "27595"}
+            )
+            self.assertEqual([row["ma_don_vi_hanh_chinh"] for row in selected["rows"]], ["27595"])
         finally:
             con.close()
 
