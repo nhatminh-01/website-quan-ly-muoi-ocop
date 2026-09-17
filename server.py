@@ -3985,6 +3985,18 @@ class Handler(BaseHTTPRequestHandler):
             sid=new_session(u); self.redirect("/dashboard",[("Set-Cookie",f"salt_session={sid}; Path=/; HttpOnly; SameSite=Lax")]); return
         sid,session=self.require_session()
         if not session: return
+
+        # Reject removed administrative-catalog lifecycle/create routes before
+        # CSRF validation. These endpoints no longer exist, so a direct HTTP
+        # request must receive 405 instead of being mistaken for a malformed
+        # edit submission (400). The supported edit route continues through
+        # the normal CSRF-protected path below.
+        if path.rstrip("/") == "/admin-units" or path.startswith("/admin-units/"):
+            parts = [part for part in path.split("/") if part]
+            is_edit = len(parts) == 3 and parts[2] == "edit"
+            if not is_edit and self.handle_admin_units(path, parsed.query, session, data):
+                return
+
         if not check_csrf(session,data): self.send_html(base_page("Lỗi","<div class='container'><div class='notice err'>Phiên làm việc không hợp lệ. Vui lòng tải lại trang.</div></div>",session),400); return
         if (path == "/users" or path.startswith("/users/") or path.rstrip("/") == "/ocop/access") and not can_manage_users(session):
             self.send_html(base_page("403", '<div class="container"><div class="notice err">Không có quyền quản lý tài khoản.</div></div>', session), 403)
