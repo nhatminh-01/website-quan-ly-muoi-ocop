@@ -297,7 +297,7 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
                 representative="Nguyễn Văn A", phone="", email=""
             )
             product_ids["month"] = self.add_ocop_product(
-                con, admin_id, "MONTH", "27595", ocop_services.add_calendar_months(today, 1), 4,
+                con, admin_id, "MONTH", "27595", today + timedelta(days=30), 4,
                 representative="", email=""
             )
             product_ids["boundary"] = self.add_ocop_product(
@@ -329,7 +329,7 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
             )
             self.add_ocop_recognition(
                 con, product_ids["renewed"], "RENEWED-NEW", today,
-                ocop_services.add_calendar_months(today, 1), 5, 2, False
+                today + timedelta(days=30), 5, 2, False
             )
             con.execute(
                 "UPDATE ocop_recognitions SET is_current=FALSE "
@@ -453,6 +453,22 @@ class PostgreSQLBusinessRegressionTests(unittest.TestCase):
             self.assertIn('ocop-expiry-band critical', html)
             self.assertIn('ocop-expiry-band soon', html)
             self.assertIn('ocop-expiry-band later', html)
+
+            captured = {}
+
+            class CaptureHandler:
+                def send_html(self, content, status=200, extra_headers=None):
+                    captured["content"] = content
+                    captured["status"] = status
+
+            http_con = self.compat()
+            with patch.object(server, "db_conn", return_value=http_con):
+                handled = server.Handler.handle_ocop(
+                    CaptureHandler(), "/ocop/expiry-alerts", "", session
+                )
+            self.assertTrue(handled)
+            self.assertEqual(captured["status"], 200)
+            self.assertIn("Sản phẩm sắp hết hạn", captured["content"])
 
             with patch.object(server, "ocop_available", return_value=True), \
                     patch.object(server, "db_conn", return_value=con):
