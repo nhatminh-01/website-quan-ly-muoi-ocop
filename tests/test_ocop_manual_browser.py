@@ -32,9 +32,15 @@ class ManualBrowserTests(unittest.TestCase):
                     "Nhập dữ liệu",
                     "Cảnh báo hết hạn",
                 ])
-                methods = page.locator('[aria-label="Phương thức nhập dữ liệu OCOP"]')
-                expect(methods.get_by_role("link", name="Import file Excel", exact=True)).to_have_attribute("href", "/ocop/import")
-                expect(methods.get_by_role("link", name="Nhập dữ liệu", exact=True)).to_have_attribute("href", "#ocop-manual-form")
+                menu_entry = page.locator('.sidebar-group[data-group="ocop"] a', has_text="Nhập dữ liệu")
+                expect(menu_entry).to_have_attribute("href", "/ocop/manual")
+                expect(menu_entry).to_have_class(lambda value: "active" in value.split())
+                self.assertEqual(page.locator('[aria-label="Phương thức nhập dữ liệu OCOP"]').count(), 0)
+
+                excel_button = page.get_by_role("link", name="Nhập bằng file Excel", exact=True)
+                expect(excel_button).to_have_attribute("href", "/ocop/import")
+                self.assertEqual(excel_button.evaluate("el => getComputedStyle(el).backgroundColor"), "rgb(37, 99, 235)")
+                self.assertEqual(page.locator('.sidebar-footer p').inner_text().strip(), "v.1.0")
 
                 page.locator('[name="entity_name"]').fill("Hợp tác xã trình duyệt")
                 page.locator('[name="business_type"]').select_option("Hợp tác xã")
@@ -67,6 +73,7 @@ class ManualBrowserTests(unittest.TestCase):
                     self.assertEqual(page.locator('[name="recognition_1_star_rank"]').input_value(), "4")
                 page.get_by_role("button", name="Lưu dữ liệu", exact=True).click()
                 expect(page.get_by_role("status")).to_have_text("Đã lưu dữ liệu OCOP thành công.")
+                expect(page.get_by_role("link", name="Nhập bằng file Excel", exact=True)).to_have_attribute("href", "/ocop/import")
                 page.get_by_role("link", name="Xem sản phẩm", exact=True).click()
                 expect(page.locator(".ocop-page")).to_contain_text("4 sao")
                 self.assertEqual(errors, [])
