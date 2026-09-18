@@ -704,7 +704,7 @@ def base_page(title, body, session=None, active_path=None):
         <button type="button" id="sidebar-backdrop" class="sidebar-backdrop" aria-label="Đóng menu" tabindex="-1"></button>
         """
         body = f'<main class="app-main" id="main-content">{body}</main>'
-    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/LOGO-CCPTNT-TP.HCM_.jpg?v=20260918-ccptnt" type="image/jpeg"><link rel="stylesheet" href="/assets/app.css?v=20260917-dashboard-v1"><script src="/assets/app.js?v=20260916-sidebar-scroll-v2" defer></script></head><body>{top}{body}</body></html>"""
+    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/LOGO-CCPTNT-TP.HCM_.jpg?v=20260918-ccptnt" type="image/jpeg"><link rel="stylesheet" href="/assets/app.css?v=20260918-v12-green-dashboard"><script src="/assets/app.js?v=20260916-sidebar-scroll-v2" defer></script></head><body>{top}{body}</body></html>"""
 
 
 # OCOP T2 is part of this single server entry point.  Keep the original page
