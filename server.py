@@ -962,6 +962,7 @@ def landing_page(session, query=""):
     body = f"""
     <div class="container dashboard-home">
       {take_flash(session)}
+      <div class="dashboard-breadcrumb">{icon('home')}<span>Bảng giám sát</span></div>
       <div class="page-head"><div><h1>Bảng giám sát</h1><div class="subtitle">Tổng hợp nhanh tình hình Diêm nghiệp và OCOP theo phạm vi được phép xem.</div></div></div>
       <form class="dashboard-filter-card" method="get" action="/dashboard">
         <div class="field"><label for="dashboard-unit">Đơn vị</label><select id="dashboard-unit" name="unit">{unit_options_html}</select></div>
@@ -970,13 +971,13 @@ def landing_page(session, query=""):
       </form>
       <div class="dashboard-module-grid">
         <section class="dashboard-section" aria-labelledby="salt-dashboard-title">
-          <div class="dashboard-section-heading"><div><h2 id="salt-dashboard-title">DIÊM NGHIỆP</h2></div><div class="dashboard-section-meta"><strong>{salt_period_label}</strong></div></div>
+          <div class="dashboard-section-heading"><div class="dashboard-section-title"><span class="dashboard-section-icon">{icon('area')}</span><h2 id="salt-dashboard-title">DIÊM NGHIỆP</h2></div><div class="dashboard-section-meta"><strong>{salt_period_label}</strong></div></div>
           <div class="dashboard-stat-grid">{salt_cards}</div>
           {salt_people}
           <div class="dashboard-section-footer"><a class="btn small" href="{esc(salt_detail_href)}">Xem chi tiết Diêm nghiệp →</a></div>
         </section>
         <section class="dashboard-section" aria-labelledby="ocop-dashboard-title">
-          <div class="dashboard-section-heading"><div><h2 id="ocop-dashboard-title">OCOP</h2></div><div class="dashboard-section-meta">Tính đến ngày<br><strong>{ocop_updated}</strong></div></div>
+          <div class="dashboard-section-heading"><div class="dashboard-section-title"><span class="dashboard-section-icon">{icon('dashboard')}</span><h2 id="ocop-dashboard-title">OCOP</h2></div><div class="dashboard-section-meta">Tính đến ngày<br><strong>{ocop_updated}</strong></div></div>
           <div class="dashboard-summary-grid">{ocop_cards}</div>
           {ocop_meta}
           <div class="dashboard-section-footer"><a class="btn small" href="/ocop">Xem chi tiết OCOP →</a></div>
