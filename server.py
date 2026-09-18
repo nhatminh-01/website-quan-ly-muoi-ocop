@@ -53,6 +53,8 @@ from email.policy import default
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSET_FILES = {
+    "/assets/login-hero.png": ("login-hero.png", "image/png"),
+    "/assets/login.css": ("login.css", "text/css; charset=utf-8"),
     "/assets/quoc-huy.png": ("quoc-huy.png", "image/png"),
     "/assets/app.css": ("app.css", "text/css; charset=utf-8"),
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
