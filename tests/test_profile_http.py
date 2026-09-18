@@ -346,7 +346,10 @@ class ProfileHTTPTests(unittest.TestCase):
         })[0], (404, 405))
         for action in ("activate", "deactivate"):
             with self.subTest(action=action):
-                self.assertIn(self.admin.request("POST", f"/admin-units/26732/{action}")[0], (404, 405))
+                # Include the session CSRF token so this assertion reaches the
+                # admin-unit router instead of being rejected earlier by the
+                # global CSRF guard with HTTP 400.
+                self.assertIn(self.admin.request("POST", f"/admin-units/26732/{action}", {})[0], (404, 405))
         after_count = self.catalog_unit("26732")
         self.assertEqual(after_count, before_count)
         with self.connection() as con:
