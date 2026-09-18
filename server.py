@@ -618,7 +618,7 @@ def sidebar_group(group, items, current):
     content = ''.join(links)
     if group not in ("DIÊM NGHIỆP", "OCOP", "HỆ THỐNG"):
         return f'<div class="sidebar-section">{group}</div>{content}'
-    key = "ocop" if group == "OCOP" else "salt"
+    key = {"DIÊM NGHIỆP": "salt", "OCOP": "ocop", "HỆ THỐNG": "system"}.get(group, "group")
     active = any(href == current for href, _, _ in items)
     return (f'<details class="sidebar-group" data-group="{key}" data-active="{str(active).lower()}"'
             + (' open' if active else '') + f'><summary title="{group}"><span class="group-label">{group}</span>'
