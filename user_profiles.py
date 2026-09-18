@@ -231,7 +231,6 @@ def enhance_shell(content, session, profile, icon_html):
         <a class="account-menu-item" href="/profile"><span class="menu-symbol">{icon_html("users")}</span><span>Thông tin cá nhân</span></a>
         <a class="account-menu-item" href="/guide"><span class="menu-symbol">{icon_html("file")}</span><span>Hướng dẫn sử dụng</span></a>
         <a class="account-menu-item" href="/update-history"><span class="menu-symbol">{icon_html("return")}</span><span>Lịch sử cập nhật</span></a>
-        <a class="account-menu-item" href="/consent-history"><span class="menu-symbol">{icon_html("check")}</span><span>Lịch sử đồng ý</span></a>
         <a class="account-menu-item logout" href="/logout"><span class="menu-symbol">{icon_html("logout")}</span><span>Đăng xuất</span></a>
       </div>
     </div>'''
