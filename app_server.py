@@ -267,17 +267,7 @@ class Handler(CoreHandler):
             return
 
         if path == "/update-history":
-            _, session = self.require_session()
-            if not session:
-                return
-            body = """<div class="container profile-page">
-              <div class="page-head"><div><h1>Lịch sử cập nhật</h1><div class="subtitle">Các thay đổi chính của hệ thống.</div></div></div>
-              <section class="card"><h2 class="section-title">Phiên bản hiện tại</h2>
-                <p><strong>v1.2</strong> — cập nhật giao diện xanh đồng bộ với trang đăng nhập, cải thiện Bảng giám sát và menu tài khoản.</p>
-                <p class="muted">Các thay đổi tiếp theo sẽ tiếp tục được cập nhật tại đây.</p>
-              </section>
-            </div>"""
-            self.send_html(core.base_page("Lịch sử cập nhật", body, session))
+            self.redirect("/activity")
             return
 
         if path == "/activity":
