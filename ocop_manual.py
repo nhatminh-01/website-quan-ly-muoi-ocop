@@ -15,9 +15,10 @@ EVALUATIONS = (("new", "Công nhận mới"), ("re_evaluation", "Đánh giá l�
 MANUAL_PAGE_STYLE = '''<style id="ocop-manual-entry-style">
 .manual-import-excel{background:#2563eb;border-color:#2563eb;color:#fff}
 .manual-import-excel:hover{background:#1d4ed8;border-color:#1d4ed8;color:#fff;filter:none}
-.manual-remove-recognition{background:#dc2626;border-color:#dc2626;color:#fff}
-.manual-remove-recognition:hover{background:#b91c1c;border-color:#b91c1c;color:#fff;filter:none}
-.manual-remove-recognition:focus-visible{outline:3px solid #fecaca;outline-offset:2px}
+.btn.small.manual-remove-recognition{background:#dc2626;border-color:#dc2626;color:#fff;font-weight:700}
+.btn.small.manual-remove-recognition:hover{background:#b91c1c;border-color:#b91c1c;color:#fff;filter:none}
+.btn.small.manual-remove-recognition:focus-visible{outline:3px solid #fecaca;outline-offset:2px}
+.btn.small.manual-remove-recognition:disabled{background:#f3b4b4;border-color:#f3b4b4;color:#fff;opacity:.8}
 @media(max-width:760px){.manual-page .page-head{align-items:stretch;flex-direction:column}.manual-page .page-head>.actions{width:100%}.manual-page .page-head>.actions .btn{width:100%}}
 </style>'''
 
