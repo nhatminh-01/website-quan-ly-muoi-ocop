@@ -39,7 +39,7 @@ def enhance_login_page(content: str) -> str:
         end += 6
 
     error = _error_notice(content[start:end])
-    style = '<link rel="stylesheet" href="/assets/login.css?v=20260918-artwork">'
+    style = '<link rel="stylesheet" href="/assets/login.css?v=20260918-compact">'
     page = f'''{style}<main class="login-v11-shell">
       <section class="login-v11-visual" aria-label="Nhận diện Chi cục Phát triển nông thôn">
         <img class="login-v11-hero" src="/assets/login-hero.png" width="1198" height="1313" fetchpriority="high" alt="Chi cục Phát triển nông thôn Thành phố Hồ Chí Minh — cảnh nông nghiệp, thành phố và chuyển đổi số">
