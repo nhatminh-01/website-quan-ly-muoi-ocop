@@ -154,33 +154,6 @@
     link.href = '/ocop/manual';
   });
 
-  const usersHeading = [...document.querySelectorAll('.page-head h1')].find(el => el.textContent.trim() === 'Tài khoản đơn vị');
-  if (usersHeading) {
-    usersHeading.textContent = 'Tài khoản Chi cục';
-    const subtitle = usersHeading.parentElement?.querySelector('.subtitle');
-    if (subtitle) subtitle.textContent = 'Quản lý tài khoản quản trị và chuyên viên nội bộ Chi cục.';
-    document.querySelector('a[href="/ocop/access"]')?.remove();
-    const createCard = document.querySelector('form[action="/users/new"]')?.closest('.card');
-    if (createCard && !document.querySelector('.chi-cuc-only-note')) {
-      const note = document.createElement('div');
-      note.className = 'notice info chi-cuc-only-note';
-      note.textContent = 'Chỉ tạo tài khoản Quản trị Chi cục hoặc Chuyên viên Chi cục. Tài khoản xã/phường cũ chỉ được giữ để bảo toàn lịch sử dữ liệu.';
-      createCard.parentNode.insertBefore(note, createCard);
-    }
-    document.querySelectorAll('.summary-table tbody tr').forEach(row => {
-      const cells = row.querySelectorAll('td');
-      if (cells.length < 5 || cells[1].textContent.trim() !== 'Đơn vị xã/phường') return;
-      row.classList.add('legacy-unit-account');
-      cells[1].textContent = 'Tài khoản xã/phường (cũ)';
-      row.querySelector('a[href$="/edit"]')?.remove();
-      const status = cells[3].textContent.trim();
-      cells[4].querySelectorAll('form').forEach(form => {
-        if (!form.action.endsWith('/deactivate')) form.remove();
-      });
-      if (status !== 'Hoạt động') cells[4].textContent = 'Đã ngưng · chỉ lưu lịch sử';
-    });
-  }
-
   const clock = document.getElementById('clock-time');
   const calendar = document.getElementById('clock-date');
   if (clock && calendar) {
@@ -205,17 +178,8 @@
   });
   document.querySelectorAll('form select[name="role"]').forEach(role => {
     const form = role.closest('form');
-    const legacyUnitEdit = /^\/users\/\d+\/edit\/?$/.test(location.pathname) && role.value === 'unit';
-    if (legacyUnitEdit) {
-      const notice = document.createElement('div');
-      notice.className = 'notice info';
-      notice.textContent = 'Đây là tài khoản xã/phường cũ. Hệ thống giữ lại để bảo toàn lịch sử; hãy ngưng kích hoạt từ danh sách tài khoản nếu không còn sử dụng.';
-      form.prepend(notice);
-      form.querySelector('button[type="submit"]')?.setAttribute('disabled', 'disabled');
-    } else {
-      role.querySelector('option[value="unit"]')?.remove();
-      if (!['admin', 'staff'].includes(role.value)) role.value = 'staff';
-    }
+    role.querySelector('option[value="unit"]')?.remove();
+    if (!['admin', 'staff'].includes(role.value)) role.value = 'staff';
     const syncUnitFields = () => {
       const isUnit = role.value === 'unit';
       for (const [selector, visible] of [['[data-unit-field]', isUnit], ['[data-office-field]', !isUnit]]) {

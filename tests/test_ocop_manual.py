@@ -113,8 +113,8 @@ class ManualPostgreSQLTests(unittest.TestCase):
         sid = server.new_session(row)
         legacy.cookie = "salt_session=" + sid
         legacy.csrf = server.SESSIONS[sid]["csrf"]
-        self.assertEqual(legacy.request("GET", "/ocop/manual")[0], 403)
-        self.assertEqual(legacy.request("POST", "/ocop/manual", form())[0], 403)
+        self.assertEqual(legacy.request("GET", "/ocop/manual")[0], 303)
+        self.assertEqual(legacy.request("POST", "/ocop/manual", form())[0], 303)
         with self.assertRaises(svc.OcopError) as blocked:
             ocop_manual.save(self.con, {"user_id":row["id"], "role":"unit"}, form())
         self.assertEqual(blocked.exception.status, 403)

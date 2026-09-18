@@ -23,3 +23,11 @@ def can_manage_users(session):
 
 def can_review_records(session):
     return is_chi_cuc_user(session)
+
+
+LEGACY_ROLES = ("unit", "legacy")
+
+
+def is_legacy_account(user):
+    """Archived identities remain available to historical references only."""
+    return bool(user and user.get("role") in LEGACY_ROLES)

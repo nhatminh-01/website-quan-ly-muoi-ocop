@@ -82,6 +82,7 @@ def main() -> int:
             (20, "activity_audit"),
             (20, "ocop_expiry_indexes"),
             (21, "hcmc_168_admin_units"),
+            (22, "archive_legacy_users"),
         )],
     ]
 

@@ -101,9 +101,9 @@ class DataEntryHTTPTests(unittest.TestCase):
 
     def test_legacy_unit_is_forbidden_from_data_entry_hub(self):
         legacy = self.legacy_client()
-        status, _, content = legacy.request("GET", "/ocop/data-entry")
-        self.assertEqual(status, 403)
-        self.assertIn("Chỉ tài khoản nội bộ Chi cục", content)
+        status, headers, _ = legacy.request("GET", "/ocop/data-entry")
+        self.assertEqual(status, 303)
+        self.assertIn(headers["Location"], ("/", "/login"))
 
 
 @unittest.skipUnless(

@@ -343,7 +343,7 @@ class Handler(CoreHandler):
                     con.commit()
                 self.send_html(core.login_page("Tên đăng nhập hoặc mật khẩu không đúng."), 401)
                 return
-            if not user["active"]:
+            if not user["active"] or not core.is_chi_cuc_user(user):
                 if core.is_chi_cuc_user(user):
                     activity_log.write_activity(
                         con, user["id"], "login", "Đăng nhập tài khoản không hoạt động",

@@ -2,7 +2,7 @@ name: PostgreSQL regression
 on:
   push:
   pull_request:
-    branches: [main, update-v1.1]
+    branches: [main, update-v1.1, v1.2]
 permissions:
   contents: read
 jobs:

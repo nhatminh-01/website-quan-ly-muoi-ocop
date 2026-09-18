@@ -26,7 +26,7 @@ import time
 import logging
 from backend_db import compat_connect, load_settings, INTEGRITY_ERRORS
 from permissions import (ROLE_ADMIN, ROLE_STAFF, ROLE_UNIT, ROLE_LABELS,
-                         is_admin, is_chi_cuc_user, can_manage_users, can_review_records)
+                         is_admin, is_chi_cuc_user, is_legacy_account, can_manage_users, can_review_records)
 from salt_normalization import sync_methods
 from weekly_import import (
     WeeklyImportError, detect_weekly_period, parse_weekly_workbook,
@@ -536,7 +536,7 @@ def get_session(handler):
             current = get_user(con, s["user_id"])
         finally:
             con.close()
-        if (not current or not current["active"] or current["role"] not in tuple(ROLE_LABELS)
+        if (not current or not current["active"] or not is_chi_cuc_user(current)
                 or s.get("auth_version") != current["password_hash"]):
             with SESSION_LOCK:
                 SESSIONS.pop(sid, None)
@@ -1561,17 +1561,18 @@ def return_page(session, rid):
     """
     return base_page("Yêu cầu chỉnh sửa", body, session)
 
-def users_page(session):
+def users_page(session, show_legacy=False):
     if not can_manage_users(session):
         return None
 
     con = db_conn()
-    users = repositories.list_users(con)
+    users = repositories.list_users(con, include_legacy=show_legacy)
     unit_fields = admin_unit_pages.account_fields(con)
     con.close()
 
     trs = ""
     for u in users:
+        archived = is_legacy_account(u)
         cannot_delete = u["id"] == session["user_id"]
 
         actions = f"""
@@ -1591,31 +1592,38 @@ def users_page(session):
             """
 
         actions += "</div>"
+        role_label = esc(ROLE_LABELS.get(u["role"], u["role"]))
+        if archived:
+            actions = '<span class="muted">Chỉ đọc</span>'
+            role_label = '<span class="account-badge account-badge-legacy">Tài khoản xã/phường (cũ)</span><span class="account-history-label">Chỉ lưu lịch sử</span>'
+        state = "Ngừng hoạt động" if archived or not u["active"] else "Hoạt động"
+        state_class = "inactive" if archived or not u["active"] else "active"
 
         trs += f"""
-        <tr>
-            <td>{esc(u["username"])}</td>
-            <td>{esc(ROLE_LABELS.get(u["role"], u["role"]))}</td>
-            <td>{esc(u["unit_name"] or "")}</td>
-            <td>{"Hoạt động" if u["active"] else "Ngưng hoạt động"}</td>
-            <td>{actions}</td>
+        <tr data-account-role="{esc(u['role'])}" data-user-id="{u['id']}">
+            <td data-label="Tên đăng nhập">{esc(u["username"])}</td>
+            <td data-label="Vai trò">{role_label}</td>
+            <td data-label="Đơn vị">{esc(u["unit_name"] or "")}</td>
+            <td data-label="Trạng thái"><span class="account-badge {state_class}">{state}</span></td>
+            <td data-label="Thao tác">{actions}</td>
         </tr>
         """
 
     body = f"""
-    <div class="container">
+    <div class="container users-page">
       {take_flash(session)}
 
       <div class="page-head">
         <div>
-          <h1>Tài khoản đơn vị</h1>
+          <h1>Tài khoản Chi cục</h1>
           <div class="subtitle">
-            Quản lý tài khoản Chi cục và các đơn vị xã/phường.
+            Quản lý tài khoản quản trị và chuyên viên nội bộ Chi cục.
           </div>
         </div>
-        {'<a class="btn" href="/ocop/access">Phân địa bàn OCOP</a>' if ocop_available() else ''}
+
       </div>
 
+      <div class="notice info chi-cuc-only-note">Chỉ tạo tài khoản Quản trị Chi cục hoặc Chuyên viên. Tài khoản xã/phường cũ đã ngừng hoạt động và chỉ được giữ để bảo toàn lịch sử dữ liệu.</div>
       <div class="card">
         <form method="post" action="/users/new">
           {csrf_input(session)}
@@ -1634,7 +1642,6 @@ def users_page(session):
             <div class="field">
               <label>Vai trò</label>
               <select name="role">
-                <option value="unit">Đơn vị xã/phường</option>
                 <option value="staff">Chuyên viên Chi cục</option>
                 <option value="admin">Quản trị Chi cục</option>
               </select>
@@ -1653,9 +1660,13 @@ def users_page(session):
         </form>
       </div>
 
-      <div class="card">
+      <div class="card users-list-card">
+        <div class="users-filters" role="group" aria-label="Lọc tài khoản">
+          <a class="btn {'primary' if not show_legacy else ''}" href="/users" {'aria-current="page"' if not show_legacy else ''}>Tài khoản nội bộ</a>
+          <a class="btn {'primary' if show_legacy else ''}" href="/users?show_legacy=1" {'aria-current="page"' if show_legacy else ''}>Hiện tài khoản xã/phường cũ</a>
+        </div>
         <div class="table-wrap">
-          <table class="summary-table">
+          <table class="summary-table users-table">
             <thead>
               <tr>
                 <th>Tên đăng nhập</th>
@@ -1666,7 +1677,7 @@ def users_page(session):
               </tr>
             </thead>
             <tbody>
-              {trs}
+              {trs or '<tr><td colspan="5" class="empty">Chưa có tài khoản.</td></tr>'}
             </tbody>
           </table>
         </div>
@@ -1687,7 +1698,6 @@ def user_edit_page(session, user, error="", profile_data=None):
         if error else ""
     )
 
-    unit_selected = "selected" if user["role"] == ROLE_UNIT else ""
     staff_selected = "selected" if user["role"] == ROLE_STAFF else ""
     admin_selected = "selected" if user["role"] == ROLE_ADMIN else ""
     active_checked = "checked" if user["active"] else ""
@@ -1742,10 +1752,6 @@ def user_edit_page(session, user, error="", profile_data=None):
           <div class="field">
             <label>Vai trò</label>
             <select name="role">
-              <option value="unit" {unit_selected}>
-                Đơn vị xã/phường
-              </option>
-
               <option value="staff" {staff_selected}>Chuyên viên Chi cục</option>
               <option value="admin" {admin_selected}>
                 Quản trị Chi cục
@@ -3608,7 +3614,7 @@ class Handler(BaseHTTPRequestHandler):
         # =========================
         if path == "/users":
 
-            p = users_page(session)
+            p = users_page(session, show_legacy=parse_qs(parsed.query).get("show_legacy", [""])[0] == "1")
 
             self.send_html(
                 p
@@ -3773,6 +3779,10 @@ class Handler(BaseHTTPRequestHandler):
 
                 return
 
+
+            if is_legacy_account(user):
+                self.send_html(base_page("Tài khoản lưu lịch sử", '<div class="container"><div class="notice info">' + repositories.ARCHIVED_ACCOUNT_MESSAGE + '</div><a class="btn" href="/users?show_legacy=1">Quay lại tài khoản</a></div>', session), 403)
+                return
 
             self.send_html(
                 user_edit_page(
@@ -3988,7 +3998,7 @@ class Handler(BaseHTTPRequestHandler):
             username=data.get("username","").strip(); password=data.get("password","")
             con=db_conn(); u=find_user_by_username(con, username); con.close()
             if not u or not verify_password(password,u["password_hash"]): self.send_html(login_page("Tên đăng nhập hoặc mật khẩu không đúng."),401); return
-            if not u["active"]: self.send_html(login_page("Tài khoản không hoạt động. Vui lòng liên hệ Chi cục để được xử lý."),401); return
+            if not u["active"] or not is_chi_cuc_user(u): self.send_html(login_page("Tài khoản không hoạt động. Vui lòng liên hệ Chi cục để được xử lý."),401); return
             sid=new_session(u); self.redirect("/dashboard",[("Set-Cookie",f"salt_session={sid}; Path=/; HttpOnly; SameSite=Lax")]); return
         sid,session=self.require_session()
         if not session: return
@@ -4101,8 +4111,8 @@ class Handler(BaseHTTPRequestHandler):
             if not can_manage_users(session): self.send_html(base_page("403","<div class='container'><div class='notice err'>Không có quyền.</div></div>",session),403); return
             username = data.get("username", "").strip()
             password = data.get("password", "")
-            role = data.get("role", ROLE_UNIT)
-            if role not in ROLE_LABELS or len(password) < 6 or not username:
+            role = data.get("role", ROLE_STAFF)
+            if role not in (ROLE_ADMIN, ROLE_STAFF) or len(password) < 6 or not username:
                 self.send_html(base_page("Lỗi", '<div class="container">Thông tin tài khoản chưa hợp lệ.</div>', session),400)
                 return
             con = db_conn()
@@ -4156,6 +4166,14 @@ class Handler(BaseHTTPRequestHandler):
 
             uid = int(parts[1])
             action = parts[2]
+            con = db_conn()
+            try:
+                target_user = get_user(con, uid)
+            finally:
+                con.close()
+            if is_legacy_account(target_user):
+                self.send_html(base_page("Tài khoản lưu lịch sử", '<div class="container"><div class="notice info">' + repositories.ARCHIVED_ACCOUNT_MESSAGE + '</div><a class="btn" href="/users?show_legacy=1">Quay lại tài khoản</a></div>', session), 403)
+                return
 
             if action in ("activate", "deactivate"):
                 if uid == session["user_id"] and action == "deactivate":
@@ -4169,6 +4187,10 @@ class Handler(BaseHTTPRequestHandler):
                     repositories.set_user_active(con, uid, action == "activate")
                     con.commit()
                     invalidate_user_sessions(uid)
+                except repositories.ArchivedAccountError as exc:
+                    con.rollback()
+                    self.send_html(base_page("Tài khoản lưu lịch sử", '<div class="container">' + esc(exc) + '</div>', session), 403)
+                    return
                 finally:
                     con.close()
                 set_flash(session, "ok", "Đã kích hoạt lại tài khoản." if action == "activate" else "Đã ngưng kích hoạt tài khoản.")
@@ -4191,7 +4213,7 @@ class Handler(BaseHTTPRequestHandler):
 
                 username = data.get("username", "").strip()
                 unit_name = data.get("unit_name", "").strip()
-                role = data.get("role", ROLE_UNIT)
+                role = data.get("role", ROLE_STAFF)
                 password = data.get("password", "")
                 active = 1 if data.get("active") == "1" else 0
 
@@ -4207,8 +4229,10 @@ class Handler(BaseHTTPRequestHandler):
                     )
                     return
 
-                if role not in tuple(ROLE_LABELS):
-                    role = ROLE_UNIT
+                if role not in (ROLE_ADMIN, ROLE_STAFF):
+                    con.close()
+                    self.send_html(user_edit_page(session, user, "Chỉ được chọn vai trò Quản trị Chi cục hoặc Chuyên viên."), 400)
+                    return
 
                 # Không cho admin đang đăng nhập tự khóa chính mình
                 if uid == session["user_id"] and (not active or role != ROLE_ADMIN):
@@ -4251,6 +4275,10 @@ class Handler(BaseHTTPRequestHandler):
                         "Đã cập nhật tài khoản."
                     )
 
+                except repositories.ArchivedAccountError as exc:
+                    con.rollback()
+                    self.send_html(base_page("Tài khoản lưu lịch sử", '<div class="container">' + esc(exc) + '</div>', session), 403)
+                    return
                 except admin_units.CatalogError as exc:
                     con.rollback()
                     self.send_html(user_edit_page(session,user,str(exc)),exc.status)

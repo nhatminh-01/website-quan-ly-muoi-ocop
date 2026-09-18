@@ -508,8 +508,8 @@ class ProfileHTTPTests(unittest.TestCase):
             row = server.get_user(backend_db.CompatConnection(con), self.ids["legacy_unit"])
             sid = server.new_session(row)
         legacy.cookie = "salt_session=" + sid
-        self.assertEqual(legacy.request("GET", "/profile")[0], 403)
-        self.assertEqual(legacy.request("POST", "/profile", {"full_name":"Không được sửa"})[0], 403)
+        self.assertEqual(legacy.request("GET", "/profile")[0], 303)
+        self.assertEqual(legacy.request("POST", "/profile", {"full_name":"Không được sửa"})[0], 303)
         self.assertEqual(self.admin.request("POST", "/users/new", {"username":"new_unit", "password":"Profile-test-2026", "role":"unit"})[0], 400)
         self.assertEqual(self.staff.request("GET", "/logout")[0], 303)
         self.assertEqual(self.staff.request("GET", "/profile")[0], 303)
