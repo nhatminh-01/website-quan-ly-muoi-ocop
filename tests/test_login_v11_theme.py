@@ -14,6 +14,8 @@ class LoginV11ThemeTests(unittest.TestCase):
         self.assertIn('login-v11-shell', page)
         self.assertIn('Trung tâm Chuyển đổi số Nông nghiệp và Môi trường', page)
         self.assertIn('name="remember" value="1"', page)
+        self.assertIn('login-v11-password-toggle', page)
+        self.assertIn('aria-label="Hiển thị mật khẩu"', page)
         self.assertIn('Sai mật khẩu.', page)
         self.assertNotIn('Nội dung cũ', page)
         self.assertNotIn('NÔNG THÔN PHÁT TRIỂN - NÔNG NGHIỆP BỀN VỮNG', page.upper())
