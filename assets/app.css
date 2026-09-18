@@ -940,3 +940,18 @@ a{color:var(--primary)}
   .profile-account.account-menu{max-width:none}
   .profile-account.account-menu .account-menu-trigger{max-width:46px}
 }
+
+
+/* v1.2 dashboard equal-height module columns */
+@media(min-width:1500px){
+  .dashboard-module-grid{align-items:stretch}
+  .dashboard-module-grid>.dashboard-section{
+    display:flex;
+    flex-direction:column;
+    height:100%;
+  }
+  .dashboard-module-grid>.dashboard-section .dashboard-section-footer{
+    margin-top:auto;
+    padding-top:12px;
+  }
+}
