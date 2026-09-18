@@ -125,6 +125,9 @@ class ProfileHeaderTests(unittest.TestCase):
             ".dashboard-stat-grid,.dashboard-summary-grid,.dashboard-people{grid-template-columns:minmax(0,1fr)",
             css,
         )
+        self.assertIn(".dashboard-module-grid{align-items:stretch}", css)
+        self.assertIn("height:100%;", css)
+        self.assertIn("margin-top:auto;", css)
 
     def test_sidebar_has_explicit_dashboard_home_link(self):
         session = {"username": "staff_test", "role": "staff", "unit_name": "Chi cục"}
@@ -538,4 +541,4 @@ class ProfileHTTPTests(unittest.TestCase):
         self.assertIn("Xem chi tiết Diêm nghiệp", content)
         self.assertIn("Xem chi tiết OCOP", content)
         self.assertIn("Đặt lại bộ lọc", content)
-        self.assertIn("dashboard-v1", content)
+        self.assertIn("/assets/app.css?v=", content)
