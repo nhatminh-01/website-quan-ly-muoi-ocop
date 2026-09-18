@@ -71,7 +71,7 @@ class ProfileHeaderTests(unittest.TestCase):
         self.assertIn("Chuyên viên Chi cục", trigger["text"])
         self.assertEqual(page.by_class("account-avatar")[0]["text"], "M")
         links = {node["attrs"].get("href") for node in page.by_class("account-menu-item")}
-        self.assertTrue({"/profile", "/change-password", "/activity", "/logout"}.issubset(links))
+        self.assertTrue({"/profile", "/guide", "/update-history", "/consent-history", "/logout"}.issubset(links))
         sidebar = [node for node in page.by_class("sidebar-link") if node["attrs"]["href"] == "/profile"]
         self.assertEqual(len(sidebar), 1)
         self.assertEqual(sidebar[0]["attrs"]["aria-current"], "page")
@@ -502,7 +502,7 @@ class ProfileHTTPTests(unittest.TestCase):
                 status, _, content = self.staff.request("GET", path)
                 self.assertEqual(status, 200)
                 self.assertEqual(len(Page(content).by_class("account-menu-trigger")), 1)
-                self.assertIn('href="/activity"', content)
+                self.assertIn('href="/update-history"', content)
 
     def test_common_dashboard_renders_both_modules_and_responsive_grids(self):
         status, _, content = self.staff.request("GET", "/dashboard")
