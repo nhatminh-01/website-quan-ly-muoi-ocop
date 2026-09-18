@@ -62,7 +62,7 @@ def enhance_login_page(content: str) -> str:
             <div class="login-v11-options"><label class="login-v11-remember"><input id="login-v11-remember" type="checkbox" name="remember" value="1">Ghi nhớ đăng nhập</label><span>Thiết bị tin cậy</span></div>
             <button class="login-v11-submit" type="submit"><span>Đăng nhập</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h18m-8-8 8 8-8 8"/></svg></button>
           </form>
-          <div class="login-v11-info"><svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14" r="12"/><path d="M14 12v8m-2 0h4"/><circle cx="14" cy="7.5" r=".8"/></svg><div><b>Tài khoản nội bộ Chi cục.</b>Liên hệ quản trị để được cấp tài khoản. Hệ thống không còn cấp tài khoản đăng nhập cho xã/phường.</div></div>
+          <div class="login-v11-info"><svg viewBox="0 0 28 28" aria-hidden="true"><circle cx="14" cy="14" r="12"/><path d="M14 12v8m-2 0h4"/><circle cx="14" cy="7.5" r=".8"/></svg><div><b>Tài khoản nội bộ Chi cục.</b>Liên hệ quản trị để được cấp tài khoản.</div></div>
         </div>
         <footer class="login-v11-footer">
           <div class="login-v11-maker"><svg viewBox="0 0 32 42" aria-hidden="true"><path d="M16 39V14m0 13C4 29 2 20 3 15c8 0 13 5 13 12Zm0 5c12 1 14-7 13-12-8 0-13 5-13 12ZM16 3c-11 8-9 14 0 18 9-4 11-10 0-18Zm-8 18 5 4m11 1-5 4"/></svg><div><small>Đơn vị tạo lập hệ thống</small><strong>Trung tâm Chuyển đổi số Nông nghiệp và Môi trường</strong></div></div>
