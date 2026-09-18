@@ -71,7 +71,8 @@ class ProfileHeaderTests(unittest.TestCase):
         self.assertIn("Chuyên viên Chi cục", trigger["text"])
         self.assertEqual(page.by_class("account-avatar")[0]["text"], "M")
         links = {node["attrs"].get("href") for node in page.by_class("account-menu-item")}
-        self.assertTrue({"/profile", "/guide", "/update-history", "/consent-history", "/logout"}.issubset(links))
+        self.assertTrue({"/profile", "/guide", "/update-history", "/logout"}.issubset(links))
+        self.assertNotIn("/consent-history", links)
         sidebar = [node for node in page.by_class("sidebar-link") if node["attrs"]["href"] == "/profile"]
         self.assertEqual(len(sidebar), 1)
         self.assertEqual(sidebar[0]["attrs"]["aria-current"], "page")
@@ -91,6 +92,20 @@ class ProfileHeaderTests(unittest.TestCase):
             scripts = [node for node in page.nodes if node["tag"] == "script" and not node["attrs"].get("src")]
             self.assertEqual(len(scripts), 1)
             self.assertEqual(scripts[0]["attrs"].get("id"), "account-menu-script")
+
+    def test_system_sidebar_is_collapsible_and_salt_lookup_label_is_short(self):
+        session = {"user_id": 1, "username": "staff_test", "role": "staff", "unit_name": "Chi cục"}
+        with patch.object(server, "ocop_available", return_value=False):
+            content = server.base_page("Dữ liệu báo cáo", "", session, active_path="/records")
+        page = Page(content)
+        system_groups = [
+            node for node in page.by_class("sidebar-group")
+            if node["attrs"].get("data-group") == "system"
+        ]
+        self.assertEqual(len(system_groups), 1)
+        self.assertIn("HỆ THỐNG", system_groups[0]["text"])
+        self.assertIn(">Tra cứu báo cáo<", content)
+        self.assertNotIn("Tra cứu báo cáo Diêm nghiệp", content)
 
     def test_common_dashboard_has_two_column_desktop_and_one_column_mobile_grids(self):
         css = (Path(server.__file__).parent / "assets" / "app.css").read_text(encoding="utf-8")
