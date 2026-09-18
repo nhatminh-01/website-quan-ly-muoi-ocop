@@ -616,7 +616,7 @@ def sidebar_group(group, items, current):
                      + (' aria-current="page"' if active else '')
                      + f'>{icon(symbol)}<span class="sidebar-label">{label}</span></a>')
     content = ''.join(links)
-    if group not in ("DIÊM NGHIỆP", "OCOP"):
+    if group not in ("DIÊM NGHIỆP", "OCOP", "HỆ THỐNG"):
         return f'<div class="sidebar-section">{group}</div>{content}'
     key = "ocop" if group == "OCOP" else "salt"
     active = any(href == current for href, _, _ in items)
@@ -646,13 +646,15 @@ def base_page(title, body, session=None, active_path=None):
             "Dữ liệu chuẩn hóa": "/records",
         }.get(title, "/records")
         current = active_path or ("/standard-data" if title == "Dữ liệu chuẩn hóa" else current)
-        salt_items = [("/records", "table", "Tra cứu báo cáo Diêm nghiệp")]
+        salt_items = [("/records", "table", "Tra cứu báo cáo")]
         if is_chi_cuc_user(session):
             salt_items.insert(0, ("/import-excel", "download", "Import báo cáo tuần"))
         system_items = []
         if can_manage_users(session):
             system_items.append(("/users", "users", "Tài khoản"))
             system_items.append(("/admin-units", "location", "Danh mục đơn vị hành chính"))
+        if is_chi_cuc_user(session):
+            system_items.append(("/profile", "users", "Thông tin cá nhân"))
         system_items.extend([("/change-password", "key", "Đổi mật khẩu"),
                              ("/logout", "logout", "Đăng xuất")])
         # Keep the dashboard as a standalone home link so it is always easy
@@ -705,7 +707,7 @@ def base_page(title, body, session=None, active_path=None):
         <button type="button" id="sidebar-backdrop" class="sidebar-backdrop" aria-label="Đóng menu" tabindex="-1"></button>
         """
         body = f'<main class="app-main" id="main-content">{body}</main>'
-    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/LOGO-CCPTNT-TP.HCM_.jpg?v=20260918-ccptnt" type="image/jpeg"><link rel="stylesheet" href="/assets/app.css?v=20260918-v12-account-dropdown"><script src="/assets/app.js?v=20260916-sidebar-scroll-v2" defer></script></head><body>{top}{body}</body></html>"""
+    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/LOGO-CCPTNT-TP.HCM_.jpg?v=20260918-ccptnt" type="image/jpeg"><link rel="stylesheet" href="/assets/app.css?v=20260918-v12-system-dropdown"><script src="/assets/app.js?v=20260916-sidebar-scroll-v2" defer></script></head><body>{top}{body}</body></html>"""
 
 
 # OCOP T2 is part of this single server entry point.  Keep the original page
