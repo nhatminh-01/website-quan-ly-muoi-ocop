@@ -280,17 +280,6 @@ class Handler(CoreHandler):
             self.send_html(core.base_page("Lịch sử cập nhật", body, session))
             return
 
-        if path == "/consent-history":
-            _, session = self.require_session()
-            if not session:
-                return
-            body = """<div class="container profile-page">
-              <div class="page-head"><div><h1>Lịch sử đồng ý</h1><div class="subtitle">Theo dõi các xác nhận/đồng ý gắn với tài khoản.</div></div></div>
-              <section class="card"><div class="notice info">Hiện chưa có bản ghi đồng ý riêng được lưu cho tài khoản này.</div></section>
-            </div>"""
-            self.send_html(core.base_page("Lịch sử đồng ý", body, session))
-            return
-
         if path == "/activity":
             _, session = self.require_session()
             if not session:
