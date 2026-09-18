@@ -950,6 +950,13 @@ a{color:var(--primary)}
     flex-direction:column;
     height:100%;
   }
+  /* OCOP has less content than Diêm nghiệp. Let its 2x2 summary grid
+     absorb the spare height so the panel stays equal-height without
+     leaving a large empty block above the footer. */
+  .dashboard-module-grid>.dashboard-section:nth-child(2) .dashboard-summary-grid{
+    flex:1 1 auto;
+    grid-template-rows:repeat(2,minmax(104px,1fr));
+  }
   .dashboard-module-grid>.dashboard-section .dashboard-section-footer{
     margin-top:auto;
     padding-top:12px;
