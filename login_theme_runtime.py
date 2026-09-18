@@ -41,8 +41,8 @@ def enhance_login_page(content: str) -> str:
     error = _error_notice(content[start:end])
     style = '''<link rel="stylesheet" href="/assets/login.css?v=20260918-password-toggle">
 <style id="login-contact-style">
-.login-v11-contact{position:absolute;z-index:2;left:0;right:0;bottom:0;min-height:17.5%;padding:18px clamp(28px,4vw,68px) 20px;display:flex;flex-direction:column;justify-content:center;color:#fff;background:linear-gradient(180deg,rgba(5,105,52,.96),rgba(4,91,45,.99));box-shadow:0 -1px 0 rgba(255,255,255,.12)}
-.login-v11-contact::before{content:"";position:absolute;left:0;right:0;top:-24px;height:25px;background:linear-gradient(165deg,transparent 0 48%,rgba(7,111,55,.96) 49% 100%);pointer-events:none}
+.login-v11-contact{position:absolute;z-index:2;left:0;right:0;bottom:0;min-height:17.5%;padding:18px clamp(28px,4vw,68px) 20px;display:flex;flex-direction:column;justify-content:center;color:#fff;background:linear-gradient(90deg,rgba(5,105,52,.98) 0%,rgba(5,105,52,.94) 50%,rgba(5,105,52,.72) 72%,rgba(5,105,52,.42) 88%,rgba(5,105,52,.18) 100%);box-shadow:0 -1px 0 rgba(255,255,255,.12)}
+.login-v11-contact::before{content:"";position:absolute;left:0;right:0;top:-24px;height:25px;background:linear-gradient(90deg,rgba(7,111,55,.96) 0%,rgba(7,111,55,.88) 52%,rgba(7,111,55,.60) 78%,rgba(7,111,55,.22) 100%);clip-path:polygon(0 48%,100% 0,100% 100%,0 100%);pointer-events:none}
 .login-v11-contact-title{position:relative;margin:0 0 9px;font-size:clamp(13px,1.05vw,18px);line-height:1.25;font-weight:800;letter-spacing:.15px;text-transform:uppercase}
 .login-v11-contact-list{position:relative;display:grid;grid-template-columns:1fr;gap:5px;margin:0;padding:0;list-style:none}
 .login-v11-contact-item{display:flex;align-items:center;gap:10px;min-width:0;font-size:clamp(11px,.82vw,14px);line-height:1.35;color:#f8fffb}
@@ -50,7 +50,7 @@ def enhance_login_page(content: str) -> str:
 .login-v11-contact-item span,.login-v11-contact-item a{min-width:0;color:inherit;text-decoration:none;overflow-wrap:anywhere}
 .login-v11-contact-item a:hover{text-decoration:underline}
 @media(max-width:1100px) and (min-width:761px){.login-v11-contact{min-height:18%;padding:15px 28px 17px}.login-v11-contact-title{font-size:13px}.login-v11-contact-item{font-size:11px;gap:8px}.login-v11-contact-item svg{width:16px;height:16px;flex-basis:16px}}
-@media(max-width:760px){.login-v11-contact{min-height:112px;padding:12px 16px 13px;background:linear-gradient(180deg,rgba(5,105,52,.97),rgba(4,91,45,.995))}.login-v11-contact::before{top:-13px;height:14px}.login-v11-contact-title{margin-bottom:7px;font-size:11px}.login-v11-contact-list{grid-template-columns:1fr 1fr;gap:5px 12px}.login-v11-contact-item{font-size:9px;gap:6px}.login-v11-contact-item:first-child{grid-column:1/-1}.login-v11-contact-item svg{width:13px;height:13px;flex-basis:13px}}
+@media(max-width:760px){.login-v11-contact{min-height:112px;padding:12px 16px 13px;background:linear-gradient(90deg,rgba(5,105,52,.98) 0%,rgba(5,105,52,.94) 72%,rgba(5,105,52,.82) 100%)}.login-v11-contact::before{top:-13px;height:14px}.login-v11-contact-title{margin-bottom:7px;font-size:11px}.login-v11-contact-list{grid-template-columns:1fr 1fr;gap:5px 12px}.login-v11-contact-item{font-size:9px;gap:6px}.login-v11-contact-item:first-child{grid-column:1/-1}.login-v11-contact-item svg{width:13px;height:13px;flex-basis:13px}}
 @media(max-width:430px){.login-v11-contact{min-height:118px}.login-v11-contact-list{grid-template-columns:1fr}.login-v11-contact-item:first-child{grid-column:auto}.login-v11-contact-item:nth-child(4),.login-v11-contact-item:nth-child(5){display:none}}
 </style>'''
     page = f'''{style}<main class="login-v11-shell">
@@ -59,7 +59,7 @@ def enhance_login_page(content: str) -> str:
         <div class="login-v11-contact" aria-label="Thông tin liên hệ Chi cục Phát triển nông thôn Thành phố Hồ Chí Minh">
           <div class="login-v11-contact-title">Chi cục Phát triển nông thôn TP. Hồ Chí Minh</div>
           <ul class="login-v11-contact-list">
-            <li class="login-v11-contact-item"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg><span>176 Hai Bà Trưng, Phường Tân Định, TP. Hồ Chí Minh</span></li>
+            <li class="login-v11-contact-item"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10M9 20v-6h6v6"/></svg><span>56 58 Bạch Đằng, Phường Bình Thạnh, Thành phố Hồ Chí Minh</span></li>
             <li class="login-v11-contact-item"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 3h3l1.5 5-2 1.5a15 15 0 0 0 5.5 5.5L16 13l5 1.5v3A3.5 3.5 0 0 1 17.5 21C9.5 21 3 14.5 3 6.5A3.5 3.5 0 0 1 6.5 3Z"/></svg><a href="tel:02838226793">028 3822 6793</a></li>
             <li class="login-v11-contact-item"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m4 7 8 6 8-6"/></svg><a href="mailto:ccptnt.snnmt@tphcm.gov.vn">ccptnt.snnmt@tphcm.gov.vn</a></li>
             <li class="login-v11-contact-item"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg><a href="http://ccptnt.vn" target="_blank" rel="noopener noreferrer">http://ccptnt.vn</a></li>
