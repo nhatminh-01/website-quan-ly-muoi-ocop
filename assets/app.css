@@ -463,7 +463,8 @@ a{color:var(--primary)}
   padding:10px 22px;
   gap:14px;
   background:
-    radial-gradient(ellipse at 56% 112%,rgba(62,147,95,.17) 0 18%,transparent 19%),
+    linear-gradient(90deg,rgba(251,255,253,.96) 0 26%,rgba(251,255,253,.22) 42%,rgba(251,255,253,.18) 66%,rgba(251,255,253,.96) 84%),
+    url('/assets/dashboard-header.webp') center bottom / auto 92px no-repeat,
     linear-gradient(180deg,#fbfffd 0%,#f2faf6 100%);
   border-bottom:1px solid #e2eee8;
   box-shadow:0 2px 14px rgba(29,92,63,.05);
@@ -834,3 +835,6 @@ a{color:var(--primary)}
   .dashboard-stat-value,.dashboard-summary-card strong,.dashboard-summary-card>span{margin-left:0}
   .dashboard-stat-heading,.dashboard-summary-heading{justify-content:flex-start}
 }
+
+/* Use the approved dashboard artwork instead of approximated header shapes. */
+.site-header::before,.site-header::after{display:none!important}
