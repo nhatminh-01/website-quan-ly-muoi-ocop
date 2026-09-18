@@ -94,11 +94,27 @@ class LoginVisualBrowserTests(unittest.TestCase):
         expect(form.locator('[name="username"]')).to_have_attribute("autocomplete", "username")
         expect(form.locator('[name="password"]')).to_have_attribute("type", "password")
         expect(form.locator('[name="password"]')).to_have_attribute("autocomplete", "current-password")
+        expect(form.get_by_role("button", name="Hiển thị mật khẩu")).to_be_visible()
         expect(form.locator('[name="remember"]')).to_have_attribute("type", "checkbox")
         expect(form.locator('[name="remember"]')).to_have_attribute("value", "1")
         self.assertTrue(form.locator('[name="username"]').evaluate("el => el.required"))
         self.assertTrue(form.locator('[name="password"]').evaluate("el => el.required"))
         expect(form.get_by_role("button", name="Đăng nhập")).to_be_visible()
+
+    def test_password_visibility_toggle_does_not_change_password_value(self):
+        from playwright.sync_api import expect
+
+        _, page = self.new_page()
+        password = page.locator('[name="password"]')
+        password.fill("Example-password-2026")
+        page.get_by_role("button", name="Hiển thị mật khẩu").click()
+        expect(password).to_have_attribute("type", "text")
+        expect(password).to_have_value("Example-password-2026")
+        expect(page.get_by_role("button", name="Ẩn mật khẩu")).to_have_attribute("aria-pressed", "true")
+        page.get_by_role("button", name="Ẩn mật khẩu").click()
+        expect(password).to_have_attribute("type", "password")
+        expect(password).to_have_value("Example-password-2026")
+        expect(page.get_by_role("button", name="Hiển thị mật khẩu")).to_have_attribute("aria-pressed", "false")
 
     def test_real_hero_loads_and_login_remains_usable_at_requested_viewports(self):
         from playwright.sync_api import expect
