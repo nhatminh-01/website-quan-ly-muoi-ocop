@@ -916,3 +916,27 @@ a{color:var(--primary)}
 @media(max-width:620px){
   .site-header{height:76px;min-height:76px}
 }
+
+
+/* v1.2 account dropdown visibility fix */
+.site-header{overflow:visible}
+.header-tools{overflow:visible}
+.profile-account.account-menu{
+  max-width:none;
+  overflow:visible;
+}
+.profile-account.account-menu .account-menu-trigger{
+  max-width:310px;
+}
+.profile-account.account-menu .account-menu-panel{
+  top:calc(100% + 10px);
+  right:0;
+  z-index:120;
+}
+@media(max-width:1150px){
+  .profile-account.account-menu .account-menu-trigger{max-width:260px}
+}
+@media(max-width:900px){
+  .profile-account.account-menu{max-width:none}
+  .profile-account.account-menu .account-menu-trigger{max-width:46px}
+}
