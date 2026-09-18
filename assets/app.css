@@ -867,3 +867,52 @@ a{color:var(--primary)}
   outline:2px solid #5aa77f;
   outline-offset:1px;
 }
+
+
+/* v1.2 header/profile layout hardening */
+.profile-account{
+  display:flex;
+  align-items:center;
+  gap:0;
+  padding:5px 7px;
+  min-width:0;
+  max-width:310px;
+}
+.profile-account .user-profile-link{
+  min-width:0;
+  max-width:100%;
+  padding:2px 4px;
+}
+.profile-account .account-copy{
+  min-width:0;
+  max-width:220px;
+}
+.profile-account .account-name,
+.profile-account .account-role{
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.profile-account .account-logout{display:none!important}
+.site-header{height:var(--header-height);min-height:var(--header-height)}
+.header-tools{min-width:0}
+@media(max-width:1150px){
+  .brand-link{max-width:460px}
+  .profile-account{max-width:250px}
+  .profile-account .account-copy{max-width:165px}
+}
+@media(max-width:900px){
+  .site-header{height:76px;min-height:76px}
+  .profile-account{
+    padding:3px;
+    border:0;
+    background:transparent;
+    box-shadow:none;
+    max-width:46px;
+  }
+  .profile-account .user-profile-link{padding:3px;max-width:46px}
+  .profile-account .account-copy{display:none}
+}
+@media(max-width:620px){
+  .site-header{height:76px;min-height:76px}
+}
