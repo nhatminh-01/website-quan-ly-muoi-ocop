@@ -681,8 +681,11 @@ def base_page(title, body, session=None, active_path=None):
         account_copy = f'<div class="account-copy"><div class="account-name">{esc(session["username"])}</div><div class="account-role">{role_label}</div></div>'
         avatar = f'<span class="account-avatar" aria-hidden="true">{initial}</span>'
         if is_chi_cuc_user(session):
-            account_html = (f'<div class="header-account profile-account"><a href="/profile" class="user-profile-link" title="Xem thông tin cá nhân" aria-label="Xem thông tin cá nhân">{account_copy}{avatar}</a>'
-                            '<a class="account-logout" href="/logout">Đăng xuất</a></div>')
+            account_html = (
+                f'<div class="header-account profile-account">'
+                f'<a href="/profile" class="user-profile-link" title="Xem thông tin cá nhân" aria-label="Xem thông tin cá nhân">{account_copy}{avatar}</a>'
+                '</div>'
+            )
         else:
             account_html = f'<div class="header-account"><div class="account-copy"><div class="account-name">{esc(session["username"])}</div><div class="account-role">{role_label}</div><a class="account-logout" href="/logout">Đăng xuất</a></div>{avatar}</div>'
         top = f"""
@@ -705,7 +708,7 @@ def base_page(title, body, session=None, active_path=None):
         <button type="button" id="sidebar-backdrop" class="sidebar-backdrop" aria-label="Đóng menu" tabindex="-1"></button>
         """
         body = f'<main class="app-main" id="main-content">{body}</main>'
-    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/LOGO-CCPTNT-TP.HCM_.jpg?v=20260918-ccptnt" type="image/jpeg"><link rel="stylesheet" href="/assets/app.css?v=20260918-v12-sidebar-contrast"><script src="/assets/app.js?v=20260916-sidebar-scroll-v2" defer></script></head><body>{top}{body}</body></html>"""
+    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/LOGO-CCPTNT-TP.HCM_.jpg?v=20260918-ccptnt" type="image/jpeg"><link rel="stylesheet" href="/assets/app.css?v=20260918-v12-header-fix"><script src="/assets/app.js?v=20260916-sidebar-scroll-v2" defer></script></head><body>{top}{body}</body></html>"""
 
 
 # OCOP T2 is part of this single server entry point.  Keep the original page
