@@ -183,7 +183,9 @@ _ACCOUNT_MENU_STYLE = """
 .account-menu-trigger .account-copy{text-align:right;min-width:0}.account-menu-trigger .account-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}.account-menu-trigger .account-role{white-space:nowrap}
 .account-menu-panel{position:absolute;right:0;top:calc(100% + 9px);z-index:90;width:245px;background:#fff;border:1px solid #dce2ea;border-radius:9px;box-shadow:0 10px 26px rgba(29,42,61,.16);overflow:hidden;padding:4px 0}
 .account-menu-item{display:flex;align-items:center;gap:12px;min-height:46px;padding:10px 14px;color:#414b5a;font-size:14px;border-bottom:1px solid #edf0f3}
-.account-menu-item:last-child{border-bottom:0}.account-menu-item:hover{background:#f5f7fb;color:#26364c}.account-menu-item .menu-symbol{width:23px;text-align:center;color:#8a919d;font-size:16px}
+.account-menu-item .menu-symbol{display:grid;place-items:center;width:22px;height:22px;color:#8a919d;flex:0 0 22px}
+.account-menu-item .menu-symbol .icon{width:18px;height:18px}
+.account-menu-item:last-child{border-bottom:0}.account-menu-item:hover{background:#f5f7fb;color:#26364c}
 .account-menu-item.logout{color:#b42318}.account-menu-divider{height:5px;background:#fafbfc;border-bottom:1px solid #edf0f3}
 .activity-status{display:inline-block;border-radius:16px;padding:4px 8px;font-size:12px;font-weight:700}.activity-status.ok{background:#e7f6ee;color:#168062}.activity-status.fail{background:#fff0ed;color:#b42318}
 .activity-filters{display:grid;grid-template-columns:repeat(5,minmax(150px,1fr));gap:12px;align-items:end}.activity-table{min-width:1080px}.activity-pagination{display:flex;justify-content:flex-end;gap:6px;margin-top:14px;align-items:center}
@@ -226,11 +228,11 @@ def enhance_shell(content, session, profile, icon_html):
         <span class="account-avatar" aria-hidden="true">{initial}</span>
       </button>
       <div class="account-menu-panel" id="account-menu-panel" data-account-menu-panel hidden>
-        <a class="account-menu-item" href="/profile"><span class="menu-symbol">●</span><span>Thông tin cá nhân</span></a>
-        <a class="account-menu-item" href="/change-password"><span class="menu-symbol">⌑</span><span>Đổi mật khẩu</span></a>
-        <a class="account-menu-item" href="/activity"><span class="menu-symbol">◴</span><span>Lịch sử hoạt động</span></a>
-        <div class="account-menu-divider" aria-hidden="true"></div>
-        <a class="account-menu-item logout" href="/logout"><span class="menu-symbol">↪</span><span>Đăng xuất</span></a>
+        <a class="account-menu-item" href="/profile"><span class="menu-symbol">${icon_html("users")}</span><span>Thông tin cá nhân</span></a>
+        <a class="account-menu-item" href="/guide"><span class="menu-symbol">${icon_html("file")}</span><span>Hướng dẫn sử dụng</span></a>
+        <a class="account-menu-item" href="/update-history"><span class="menu-symbol">${icon_html("return")}</span><span>Lịch sử cập nhật</span></a>
+        <a class="account-menu-item" href="/consent-history"><span class="menu-symbol">${icon_html("check")}</span><span>Lịch sử đồng ý</span></a>
+        <a class="account-menu-item logout" href="/logout"><span class="menu-symbol">${icon_html("logout")}</span><span>Đăng xuất</span></a>
       </div>
     </div>'''
     content, replaced = re.subn(
