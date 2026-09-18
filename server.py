@@ -44,6 +44,7 @@ import ocop_registry
 import ocop_pages
 import ocop_services
 import dashboard_services
+import diem_nghiep_reports
 from datetime import datetime, date
 from http import cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -643,12 +644,14 @@ def base_page(title, body, session=None, active_path=None):
             "Import báo cáo tuần": "/import-excel",
             "Xem trước import tuần": "/import-excel",
             "Tra cứu báo cáo tuần": "/salt/weekly",
+            "Xuất báo cáo Diêm nghiệp": "/diem-nghiep/export-report",
             "Dữ liệu chuẩn hóa": "/records",
         }.get(title, "/records")
         current = active_path or ("/standard-data" if title == "Dữ liệu chuẩn hóa" else current)
         salt_items = [("/records", "table", "Tra cứu báo cáo")]
         if is_chi_cuc_user(session):
             salt_items.insert(0, ("/import-excel", "download", "Import báo cáo tuần"))
+            salt_items.insert(1, ("/diem-nghiep/export-report", "file", "Xuất báo cáo"))
         system_items = []
         if can_manage_users(session):
             system_items.append(("/users", "users", "Tài khoản"))
@@ -2614,6 +2617,217 @@ def _weekly_total(raw_rows, column):
     return sum(values)
 
 
+def _report_value_display(value):
+    if value is None:
+        return ""
+    try:
+        number = float(value)
+        if number.is_integer():
+            return str(int(number))
+        return f"{number:.2f}".rstrip("0").rstrip(".")
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _report_cell(value, class_name="", title=""):
+    title_attr = f' title="{esc(title)}"' if title else ""
+    return f'<td class="{class_name}"{title_attr}>{esc(_report_value_display(value))}</td>'
+
+
+def _report_terms_html():
+    items = "".join(
+        f'<div class="report-term"><strong>{esc(term)}</strong><span>{esc(definition)}</span></div>'
+        for term, definition in diem_nghiep_reports.REPORT_TERM_DEFINITIONS
+    )
+    return (
+        '<details class="report-terms">'
+        '<summary>Giải thích thuật ngữ và cách tính</summary>'
+        f'<div class="report-terms-grid">{items}</div>'
+        '</details>'
+    )
+
+
+def _report_cuc_preview(rows):
+    labels = [
+        "STT", "Địa bàn", "Diện tích cộng", "Muối thủ công", "Muối công nghiệp",
+        "Sản lượng cộng", "Muối thủ công", "Muối công nghiệp", "Tiêu thụ cộng",
+        "Muối thủ công", "Muối công nghiệp", "Tồn dư chuyển năm sau", "Chế biến cộng",
+        "Muối tinh", "Muối I-ốt", "Số hộ", "Số lao động",
+    ]
+    headings = "".join(f"<th>{esc(label)}</th>" for label in labels)
+    body = []
+    for index, row in enumerate(rows):
+        cells = row["cells"]
+        values = [row.get("stt"), row.get("name")] + [cells.get(column) for column in diem_nghiep_reports.CUC_COLUMNS[2:]]
+        classes = "sheet-total" if index == 0 else ""
+        body.append(f'<tr class="{classes}">' + _report_cell(values[0], "center") + _report_cell(values[1], "name")
+                    + "".join(_report_cell(value) for value in values[2:]) + "</tr>")
+    if not body:
+        return '<div class="empty">Chưa có báo cáo tuần trong kỳ đã chọn.</div>'
+    return f'<div class="excel-sheet-wrap"><table class="excel-sheet diem-report-table"><thead><tr>{headings}</tr></thead><tbody>{"".join(body)}</tbody></table></div>'
+
+
+_SO_SECTION_LABELS = {
+    5: "I · TÌNH HÌNH SẢN XUẤT",
+    16: "II · THÔNG TIN VỀ CƠ CẤU LẠI NGÀNH DIÊM NGHIỆP",
+    35: "III · CHỦ THỂ SẢN XUẤT LIÊN QUAN DIÊM NGHIỆP",
+}
+_SO_GROUP_ROWS = {
+    14: ("4", "Thiệt hại về diêm nghiệp", ""),
+    17: ("1", "Cơ cấu giá trị sản xuất muối", ""),
+    20: ("2", "Tổng diện tích đất làm muối", ""),
+    23: ("3", "Tổng diện tích sản xuất muối", ""),
+    29: ("5", "Diện tích sản xuất muối theo quy trình an toàn, công nghệ cao", ""),
+    32: ("6", "Cơ sở hạ tầng phát triển sản xuất muối", ""),
+}
+
+
+def _report_so_preview(rows, year, month):
+    row_by_number = {row["row_number"]: row for row in rows}
+    previous_year = year - 1
+    previous_month = month - 1 if month > 1 else 12
+    previous_month_year = year if month > 1 else year - 1
+    headers = (
+        f"Chính thức tháng {month:02d}/{previous_year}",
+        f"Lũy kế chính thức đến {month:02d}/{previous_year}",
+        f"Chính thức tháng {previous_month:02d}/{previous_month_year}",
+        f"Ước tháng {month:02d}/{year}",
+        f"Ước lũy kế đến {month:02d}/{year}",
+        "Ước tháng / cùng kỳ (%)",
+        "Ước lũy kế / cùng kỳ (%)",
+    )
+    body = []
+    for row_number in range(5, 41):
+        if row_number in _SO_SECTION_LABELS:
+            body.append(f'<tr class="report-section"><th colspan="10">{esc(_SO_SECTION_LABELS[row_number])}</th></tr>')
+            continue
+        row = row_by_number.get(row_number)
+        if row:
+            cells = row["cells"]
+            body.append(
+                f'<tr><td>{esc(row["stt"])}</td><td class="name">{esc(row["label"])}</td><td>{esc(row["unit"])}</td>'
+                + "".join(
+                    _report_cell(
+                        cells.get(column),
+                        "report-cell-error" if row.get("cell_warnings", {}).get(column) else "",
+                        row.get("cell_warnings", {}).get(column, {}).get("message", ""),
+                    )
+                    for column in ("D", "E", "F", "G", "H", "I", "J")
+                )
+                + "</tr>"
+            )
+        elif row_number in _SO_GROUP_ROWS:
+            stt, label, unit = _SO_GROUP_ROWS[row_number]
+            body.append(
+                f'<tr><td>{esc(stt)}</td><td class="name">{esc(label)}</td><td>{esc(unit)}</td>'
+                + "".join(_report_cell(None) for _ in ("D", "E", "F", "G", "H", "I", "J"))
+                + "</tr>"
+            )
+    heading_cells = "".join(f"<th>{esc(label)}</th>" for label in headers)
+    return '<div class="excel-sheet-wrap"><table class="excel-sheet diem-report-table"><thead><tr><th>STT</th><th>Tên chỉ tiêu</th><th>ĐVT</th>' + heading_cells + '</tr></thead><tbody>' + "".join(body) + "</tbody></table></div>"
+
+
+def diem_nghiep_report_page(session, query=""):
+    params = parse_qs(query or "")
+    report_type = params.get("report_type", [diem_nghiep_reports.REPORT_CUC])[0].upper()
+    if report_type not in diem_nghiep_reports.REPORT_TYPES:
+        report_type = diem_nghiep_reports.REPORT_CUC
+    con = db_conn()
+    try:
+        periods = diem_nghiep_reports.available_report_periods(con)
+        if periods:
+            default_year, default_month = periods[0]
+        else:
+            default_year, default_month = date.today().year, date.today().month
+        try:
+            year = int(params.get("year", [default_year])[0])
+            month = int(params.get("month", [default_month])[0])
+            if not 2000 <= year <= 2100 or not 1 <= month <= 12:
+                raise ValueError
+        except (TypeError, ValueError):
+            year, month = default_year, default_month
+        if not periods:
+            periods = [(year, month)]
+        elif (year, month) not in periods:
+            periods = [(year, month), *periods]
+        report = diem_nghiep_reports.resolve_diem_nghiep_report(
+            con, report_type=report_type, year=year, month=month
+        )
+    finally:
+        con.close()
+
+    year_options = "".join(
+        f'<option value="{year_value}" {"selected" if year_value == year else ""}>{year_value}</option>'
+        for year_value in sorted({item[0] for item in periods}, reverse=True)
+    )
+    month_options = "".join(
+        f'<option value="{month_value}" {"selected" if month_value == month else ""}>{month_value:02d}</option>'
+        for month_value in range(1, 13)
+    )
+    cuc_active = report_type == diem_nghiep_reports.REPORT_CUC
+    type_control = (
+        '<div class="view-tabs" role="group" aria-label="Mẫu báo cáo">'
+        f'<label class="view-tab {"active" if cuc_active else ""}"><input type="radio" name="report_type" value="CUC" {"checked" if cuc_active else ""} onchange="this.form.submit()"> Báo cáo Cục</label>'
+        f'<label class="view-tab {"active" if not cuc_active else ""}"><input type="radio" name="report_type" value="SO" {"checked" if not cuc_active else ""} onchange="this.form.submit()"> Báo cáo Sở</label>'
+        '</div>'
+    )
+    snapshot_date = report.get("snapshot_date")
+    if snapshot_date:
+        source = f"Nguồn số liệu: {snapshot_date.strftime('%d/%m/%Y') if hasattr(snapshot_date, 'strftime') else snapshot_date}"
+        if report_type == diem_nghiep_reports.REPORT_SO and not report.get("previous_year_available"):
+            source += " · Cùng kỳ năm trước chưa có dữ liệu"
+        metadata = f'<div class="notice ok">{esc(source)}</div>'
+    else:
+        metadata = f'<div class="notice">Chưa có báo cáo tuần trong kỳ {month:02d}/{year}.</div>'
+    if report.get("warnings"):
+        warning_count = len(report["warnings"])
+        warning_details = report.get("warning_details") or []
+        if warning_details:
+            reference_details = [detail for detail in warning_details if detail.get("column") == "F"]
+            if reference_details and len(reference_details) == len(warning_details):
+                warning_heading = f'Có {len(reference_details)} ô tham chiếu tháng trước chưa thể tính.'
+                warning_intro = (
+                    'Lỗi nằm ở phép tính chênh lệch lũy kế của kỳ tham chiếu; '
+                    'số liệu tháng báo cáo hiện tại vẫn lấy trực tiếp từ báo cáo tuần.'
+                )
+            else:
+                warning_heading = f"Có {warning_count} chỉ tiêu chưa thể tính."
+                warning_intro = 'Hệ thống đánh dấu đỏ ô bị ảnh hưởng và giải thích nguyên nhân:'
+            details = "".join(
+                f'<li><strong>{esc(detail["label"])} (ô {esc(detail["column"])}{detail["row_number"]}):</strong> '
+                f'<div>{esc(detail["message"])}</div>'
+                f'<div class="report-warning-formula"><strong>Cách tính:</strong> {esc(detail["formula"])}</div>'
+                f'<div class="report-warning-logic"><strong>Giải thích logic:</strong> {esc(detail["logic_explanation"])}</div></li>'
+                for detail in warning_details
+            )
+            metadata += (
+                f'<div class="notice warn report-warning-notice"><strong>{esc(warning_heading)}</strong>'
+                f'<span>{esc(warning_intro)}</span>'
+                f'<ul class="report-warning-details">{details}</ul></div>'
+            )
+        else:
+            warning_names = "; ".join(report["warnings"])
+            metadata += f'<div class="notice warn">Có {warning_count} chỉ tiêu chưa thể tính do số liệu lũy tiến có điều chỉnh. <span>Chi tiết: {esc(warning_names)}</span></div>'
+    preview = _report_cuc_preview(report["rows"]) if cuc_active else _report_so_preview(report["rows"], year, month)
+    if report.get("can_export"):
+        export_url = f'/diem-nghiep/export.xlsx?report_type={report_type}&month={month}&year={year}'
+        export_action = f'<a class="btn primary" href="{export_url}">Xuất Excel</a>'
+    else:
+        export_action = '<button class="btn primary" type="button" disabled>Xuất Excel</button>'
+    body = f'''
+    <div class="container diem-report-page">
+      <div class="page-head"><div><h1>Xuất báo cáo Diêm nghiệp</h1><div class="subtitle">Chọn mẫu và kỳ báo cáo để xem trước số liệu đã chuẩn hóa.</div></div></div>
+      <form class="card dashboard-filter-card diem-report-filter" method="get">
+        <div class="field"><label>Mẫu báo cáo</label>{type_control}</div>
+        <div class="field"><label for="report-month">Tháng</label><select id="report-month" name="month" onchange="this.form.submit()">{month_options}</select></div>
+        <div class="field"><label for="report-year">Năm</label><select id="report-year" name="year" onchange="this.form.submit()">{year_options}</select></div>
+      </form>
+      {_report_terms_html()}
+      <section class="card"><div class="page-head"><div><h2>{"Báo cáo Cục" if cuc_active else "Báo cáo Sở"}</h2></div>{export_action}</div>{metadata}{preview}</section>
+    </div>'''
+    return base_page("Xuất báo cáo Diêm nghiệp", body, session, active_path="/diem-nghiep/export-report")
+
+
 def weekly_records_page(session, query):
     """Browse one imported workbook sheet as one report."""
     params = parse_qs(query)
@@ -3537,6 +3751,42 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", mime)
             self.send_header("Content-Disposition", 'attachment; filename="bao_cao_muoi_tuan.xlsx"')
+            self.send_header("Content-Length", str(len(content)))
+            self.end_headers()
+            self.wfile.write(content)
+            return
+
+        if path in ("/diem-nghiep/export-report", "/diem-nghiep/export.xlsx"):
+            if not is_chi_cuc_user(session):
+                self.send_html(base_page("403", '<div class="container"><div class="notice err">Không có quyền xuất báo cáo Diêm nghiệp.</div></div>', session), 403)
+                return
+            if path == "/diem-nghiep/export-report":
+                self.send_html(diem_nghiep_report_page(session, parsed.query))
+                return
+            params = parse_qs(parsed.query or "")
+            report_type = params.get("report_type", [diem_nghiep_reports.REPORT_CUC])[0].upper()
+            try:
+                year = int(params.get("year", [date.today().year])[0])
+                month = int(params.get("month", [date.today().month])[0])
+                if report_type not in diem_nghiep_reports.REPORT_TYPES:
+                    raise ValueError
+                con = db_conn()
+                try:
+                    report = diem_nghiep_reports.resolve_diem_nghiep_report(
+                        con, report_type=report_type, year=year, month=month
+                    )
+                finally:
+                    con.close()
+                if not report.get("can_export"):
+                    self.send_html(base_page("Xuất báo cáo Diêm nghiệp", '<div class="container"><div class="notice">Chưa có báo cáo tuần trong kỳ đã chọn.</div></div>', session, active_path="/diem-nghiep/export-report"), 404)
+                    return
+                content = diem_nghiep_reports.export_diem_nghiep_report(report)
+            except (ValueError, FileNotFoundError, RuntimeError) as exc:
+                self.send_html(base_page("Xuất báo cáo Diêm nghiệp", f'<div class="container"><div class="notice err">{esc(exc)}</div></div>', session, active_path="/diem-nghiep/export-report"), 400)
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            self.send_header("Content-Disposition", f'attachment; filename="{diem_nghiep_reports.report_filename(report_type, year, month)}"')
             self.send_header("Content-Length", str(len(content)))
             self.end_headers()
             self.wfile.write(content)
