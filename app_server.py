@@ -248,6 +248,49 @@ class Handler(CoreHandler):
             self.send_html(core.base_page("Thông tin cá nhân", body, session, active_path="/profile"))
             return
 
+        if path == "/guide":
+            _, session = self.require_session()
+            if not session:
+                return
+            body = """<div class="container profile-page">
+              <div class="page-head"><div><h1>Hướng dẫn sử dụng</h1><div class="subtitle">Hướng dẫn nhanh các chức năng chính của hệ thống.</div></div></div>
+              <section class="card"><h2 class="section-title">Các chức năng chính</h2>
+                <div class="grid">
+                  <div><strong>Bảng giám sát</strong><p class="muted">Theo dõi tổng hợp Diêm nghiệp và OCOP theo phạm vi được phép xem.</p></div>
+                  <div><strong>Diêm nghiệp</strong><p class="muted">Import báo cáo tuần và tra cứu số liệu sản xuất muối.</p></div>
+                  <div><strong>OCOP</strong><p class="muted">Tra cứu, nhập dữ liệu và theo dõi cảnh báo hết hạn.</p></div>
+                  <div><strong>Tài khoản</strong><p class="muted">Cập nhật thông tin cá nhân và sử dụng các chức năng theo đúng quyền được cấp.</p></div>
+                </div>
+              </section>
+            </div>"""
+            self.send_html(core.base_page("Hướng dẫn sử dụng", body, session))
+            return
+
+        if path == "/update-history":
+            _, session = self.require_session()
+            if not session:
+                return
+            body = """<div class="container profile-page">
+              <div class="page-head"><div><h1>Lịch sử cập nhật</h1><div class="subtitle">Các thay đổi chính của hệ thống.</div></div></div>
+              <section class="card"><h2 class="section-title">Phiên bản hiện tại</h2>
+                <p><strong>v1.2</strong> — cập nhật giao diện xanh đồng bộ với trang đăng nhập, cải thiện Bảng giám sát và menu tài khoản.</p>
+                <p class="muted">Các thay đổi tiếp theo sẽ tiếp tục được cập nhật tại đây.</p>
+              </section>
+            </div>"""
+            self.send_html(core.base_page("Lịch sử cập nhật", body, session))
+            return
+
+        if path == "/consent-history":
+            _, session = self.require_session()
+            if not session:
+                return
+            body = """<div class="container profile-page">
+              <div class="page-head"><div><h1>Lịch sử đồng ý</h1><div class="subtitle">Theo dõi các xác nhận/đồng ý gắn với tài khoản.</div></div></div>
+              <section class="card"><div class="notice info">Hiện chưa có bản ghi đồng ý riêng được lưu cho tài khoản này.</div></section>
+            </div>"""
+            self.send_html(core.base_page("Lịch sử đồng ý", body, session))
+            return
+
         if path == "/activity":
             _, session = self.require_session()
             if not session:
