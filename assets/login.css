@@ -31,7 +31,14 @@
 .login-v11-input { position: relative; }
 .login-v11-input svg { position: absolute; width: calc(25 * var(--login-unit)); height: calc(25 * var(--login-unit)); left: calc(23 * var(--login-unit)); top: 50%; transform: translateY(-50%); color: #7588a2; pointer-events: none; }
 .login-v11-card svg { fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-.login-v11-card .field input { display: block; width: 100%; height: calc(64 * var(--login-unit)); border: 1px solid #d4dce7; border-radius: calc(11 * var(--login-unit)); padding: 0 calc(20 * var(--login-unit)) 0 calc(67 * var(--login-unit)); background: #fff; color: #33475e; font-size: calc(19 * var(--login-unit)); }
+.login-v11-card .field input { display: block; width: 100%; height: calc(64 * var(--login-unit)); border: 1px solid #d4dce7; border-radius: calc(11 * var(--login-unit)); padding: 0 calc(58 * var(--login-unit)) 0 calc(67 * var(--login-unit)); background: #fff; color: #33475e; font-size: calc(19 * var(--login-unit)); }
+.login-v11-password-toggle { position:absolute; right:calc(12 * var(--login-unit)); top:50%; transform:translateY(-50%); display:grid; place-items:center; width:calc(40 * var(--login-unit)); height:calc(40 * var(--login-unit)); padding:0; border:0; border-radius:50%; background:transparent; color:#7588a2; cursor:pointer; }
+.login-v11-password-toggle:hover { background:#eef6f2; color:#0b7d4b; }
+.login-v11-password-toggle:focus-visible { outline:3px solid #67b494; outline-offset:2px; }
+.login-v11-password-toggle svg { position:static; transform:none; left:auto; top:auto; width:calc(22 * var(--login-unit)); height:calc(22 * var(--login-unit)); pointer-events:none; }
+.login-v11-password-toggle .password-eye-closed { display:none; }
+.login-v11-password-toggle[aria-pressed="true"] .password-eye-open { display:none; }
+.login-v11-password-toggle[aria-pressed="true"] .password-eye-closed { display:block; }
 .login-v11-card .field input::placeholder { color: #98a6bd; opacity: 1; }
 .login-v11-card .field input:focus { border-color: #579b7b; outline: none; box-shadow: 0 0 0 2px #1594560c; }
 .login-v11-card input:-webkit-autofill { -webkit-box-shadow: 0 0 0 1000px white inset; -webkit-text-fill-color: #33475e; }
@@ -74,7 +81,9 @@
   .login-v11-subtitle span { font-size: 13px; margin-top: 5px; }
   .login-v11-card .field { gap: 7px; margin-bottom: 18px; }
   .login-v11-card .field label { font-size: 14px; }
-  .login-v11-card .field input { height: 53px; padding: 0 13px 0 44px; font-size: 16px; border-radius: 9px; }
+  .login-v11-card .field input { height: 53px; padding: 0 48px 0 44px; font-size: 16px; border-radius: 9px; }
+  .login-v11-password-toggle { right:7px; width:38px; height:38px; }
+  .login-v11-password-toggle svg { width:20px; height:20px; }
   .login-v11-input svg { width: 20px; height: 20px; left: 14px; }
   .login-v11-options { margin: -4px 0 17px; gap: 7px; font-size: 10px; line-height: 18px; }
   .login-v11-remember { gap: 7px; font-size: 12px; }
