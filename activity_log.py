@@ -216,8 +216,8 @@ def activity_page(con, session, query_string=""):
         user_cell = f'{_esc(row["full_name"])}<br><small class="muted">{_esc(row["username"])}</small>' if is_admin else _esc(row["full_name"])
         detail = _esc(row["detail"] or "—")
         tr.append(
-            f'<tr><td>{_esc(_date_label(row["created_at"]))}</td><td>{user_cell}</td><td>{_esc(row["department"] or "—")}</td>'
-            f'<td>{_esc(_module_label(row["module"]))}</td><td>{_esc(_action_label(row["action"]))}</td><td>{detail}</td><td>{result}</td></tr>'
+            f'<tr><td class="activity-time">{_esc(_date_label(row["created_at"]))}</td><td class="activity-user">{user_cell}</td><td>{_esc(row["department"] or "—")}</td>'
+            f'<td><span class="activity-module">{_esc(_module_label(row["module"]))}</span></td><td class="activity-action">{_esc(_action_label(row["action"]))}</td><td class="activity-detail">{detail}</td><td>{result}</td></tr>'
         )
     rows_html = "".join(tr) or '<tr><td colspan="7" class="empty">Chưa có lịch sử hoạt động phù hợp.</td></tr>'
 
@@ -228,7 +228,7 @@ def activity_page(con, session, query_string=""):
     user_filter = ""
     if is_admin:
         user_filter = f'<div class="field"><label>Người dùng</label><select name="user">{_admin_filter_options(con, selected_user)}</select></div>'
-    filters = f'''<form class="card activity-filters" method="get" action="/activity">
+    filters = f'''<form class="card activity-filters activity-filter-card" method="get" action="/activity">
       {user_filter}
       <div class="field"><label>Phân hệ</label><select name="module">{"".join(module_options)}</select></div>
       <div class="field"><label>Kết quả</label><select name="success"><option value="">Tất cả</option><option value="1"{" selected" if selected_success == "1" else ""}>Thành công</option><option value="0"{" selected" if selected_success == "0" else ""}>Thất bại</option></select></div>
@@ -259,7 +259,7 @@ def activity_page(con, session, query_string=""):
     return f'''<div class="container activity-page">
       <div class="page-head"><div><h1>Lịch sử hoạt động</h1><div class="subtitle">{_esc(scope_note)}. Nhật ký chỉ đọc, không chỉnh sửa hoặc xóa trên giao diện.</div></div></div>
       {filters}
-      <section class="card"><div class="table-wrap"><table class="summary-table activity-table"><thead><tr><th>Thời gian</th><th>Người dùng</th><th>Phòng/Bộ phận</th><th>Phân hệ</th><th>Thao tác</th><th>Nội dung</th><th>Kết quả</th></tr></thead><tbody>{rows_html}</tbody></table></div>{pagination}</section>
+      <section class="card activity-log-card"><div class="table-wrap activity-table-wrap"><table class="summary-table activity-table"><thead><tr><th>Thời gian</th><th>Người dùng</th><th>Phòng/Bộ phận</th><th>Phân hệ</th><th>Thao tác</th><th>Nội dung</th><th>Kết quả</th></tr></thead><tbody>{rows_html}</tbody></table></div>{pagination}</section>
     </div>'''
 
 
