@@ -56,6 +56,7 @@ ASSET_FILES = {
     "/assets/login-hero.png": ("login-hero.png", "image/png"),
     "/assets/login.css": ("login.css", "text/css; charset=utf-8"),
     "/assets/quoc-huy.png": ("quoc-huy.png", "image/png"),
+    "/assets/LOGO-CCPTNT-TP.HCM_.jpg": ("LOGO-CCPTNT-TP.HCM_.jpg", "image/jpeg"),
     "/assets/app.css": ("app.css", "text/css; charset=utf-8"),
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/assets/ocop-manual.js": ("ocop-manual.js", "text/javascript; charset=utf-8"),
@@ -688,7 +689,7 @@ def base_page(title, body, session=None, active_path=None):
         <header class="site-header">
           <button class="menu-toggle" id="sidebar-toggle" type="button" aria-label="Thu gọn menu" aria-expanded="true" aria-controls="site-sidebar">{icon('menu')}</button>
           <a class="brand-link" href="/dashboard">
-            <img class="brand-emblem" src="/assets/quoc-huy.png" alt="Quốc huy Việt Nam" width="56" height="58">
+            <img class="brand-emblem" src="/assets/LOGO-CCPTNT-TP.HCM_.jpg" alt="Logo Chi cục Phát triển nông thôn Thành phố Hồ Chí Minh" width="56" height="58">
             <div class="brand-copy"><div class="brand-agency">{display_label}</div><div class="brand-subtitle">HỆ THỐNG QUẢN LÝ NGHIỆP VỤ</div></div>
           </a>
           <div class="header-tools">
@@ -698,12 +699,12 @@ def base_page(title, body, session=None, active_path=None):
         </header>
         <aside class="sidebar" id="site-sidebar" aria-label="Menu chính">
           <nav class="sidebar-nav" aria-label="Chức năng">{''.join(nav)}</nav>
-          <div class="sidebar-footer"><img class="sidebar-watermark" src="/assets/quoc-huy.png" alt="" width="148" height="152"><div class="sidebar-footer-line"></div><strong><span>TRUNG TÂM CHUYỂN ĐỔI SỐ</span><span>NÔNG NGHIỆP VÀ MÔI TRƯỜNG</span></strong><p>Theo dõi sản xuất và tổng hợp báo cáo các đơn vị.</p></div>
+          <div class="sidebar-footer"><img class="sidebar-watermark" src="/assets/LOGO-CCPTNT-TP.HCM_.jpg" alt="" width="148" height="152"><div class="sidebar-footer-line"></div><strong><span>TRUNG TÂM CHUYỂN ĐỔI SỐ</span><span>NÔNG NGHIỆP VÀ MÔI TRƯỜNG</span></strong><p>Theo dõi sản xuất và tổng hợp báo cáo các đơn vị.</p></div>
         </aside>
         <button type="button" id="sidebar-backdrop" class="sidebar-backdrop" aria-label="Đóng menu" tabindex="-1"></button>
         """
         body = f'<main class="app-main" id="main-content">{body}</main>'
-    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/quoc-huy.png" type="image/png"><link rel="stylesheet" href="/assets/app.css?v=20260917-dashboard-v1"><script src="/assets/app.js?v=20260916-sidebar-scroll-v2" defer></script></head><body>{top}{body}</body></html>"""
+    return f"""<!doctype html><html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)} · Quản lý nghiệp vụ</title><link rel="icon" href="/assets/LOGO-CCPTNT-TP.HCM_.jpg" type="image/jpeg"><link rel="stylesheet" href="/assets/app.css?v=20260917-dashboard-v1"><script src="/assets/app.js?v=20260916-sidebar-scroll-v2" defer></script></head><body>{top}{body}</body></html>"""
 
 
 # OCOP T2 is part of this single server entry point.  Keep the original page
@@ -741,7 +742,7 @@ def login_page(message=""):
     notice = f'<div class="notice err">{esc(message)}</div>' if message else ""
     body = f"""
     <div class="login-wrap"><div class="login">
-      <img class="login-emblem" src="/assets/quoc-huy.png" alt="Quốc huy Việt Nam" width="70" height="72">
+      <img class="login-emblem" src="/assets/LOGO-CCPTNT-TP.HCM_.jpg" alt="Logo Chi cục Phát triển nông thôn Thành phố Hồ Chí Minh" width="70" height="72">
       <h1>Hệ thống quản lý nghiệp vụ</h1>
       <p>Chi cục Phát triển nông thôn và các đơn vị xã/phường.</p>
       {notice}
@@ -3419,7 +3420,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header(
                 "Cache-Control",
                 "no-cache"
-                if filename != "quoc-huy.png"
+                if filename not in {"quoc-huy.png", "LOGO-CCPTNT-TP.HCM_.jpg"}
                 else "public, max-age=86400"
             )
 
