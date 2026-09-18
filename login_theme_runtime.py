@@ -39,7 +39,7 @@ def enhance_login_page(content: str) -> str:
         end += 6
 
     error = _error_notice(content[start:end])
-    style = '<link rel="stylesheet" href="/assets/login.css?v=20260918-compact">'
+    style = '<link rel="stylesheet" href="/assets/login.css?v=20260918-password-toggle">'
     page = f'''{style}<main class="login-v11-shell">
       <section class="login-v11-visual" aria-label="Nhận diện Chi cục Phát triển nông thôn">
         <img class="login-v11-hero" src="/assets/login-hero.png" width="1198" height="1313" fetchpriority="high" alt="Chi cục Phát triển nông thôn Thành phố Hồ Chí Minh — cảnh nông nghiệp, thành phố và chuyển đổi số">
@@ -58,6 +58,10 @@ def enhance_login_page(content: str) -> str:
             <div class="field"><label for="login-v11-password">Mật khẩu</label><div class="login-v11-input">
               <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="10" width="16" height="12" rx="2"/><path d="M7 10V6a5 5 0 0 1 10 0v4m-5 5v3"/><circle cx="12" cy="15" r="1"/></svg>
               <input id="login-v11-password" type="password" name="password" autocomplete="current-password" placeholder="Nhập mật khẩu" required>
+              <button class="login-v11-password-toggle" type="button" aria-label="Hiển thị mật khẩu" aria-pressed="false" title="Hiển thị mật khẩu">
+                <svg class="password-eye-open" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>
+                <svg class="password-eye-closed" viewBox="0 0 24 24" aria-hidden="true"><path d="m3 3 18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 5.2A11.5 11.5 0 0 1 12 5c6.5 0 10 7 10 7a16 16 0 0 1-2.2 3.1M6.6 6.6C3.7 8.4 2 12 2 12s3.5 7 10 7a10.7 10.7 0 0 0 4-.8"/></svg>
+              </button>
             </div></div>
             <div class="login-v11-options"><label class="login-v11-remember"><input id="login-v11-remember" type="checkbox" name="remember" value="1">Ghi nhớ đăng nhập</label><span>Thiết bị tin cậy</span></div>
             <button class="login-v11-submit" type="submit"><span>Đăng nhập</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h18m-8-8 8 8-8 8"/></svg></button>
@@ -70,5 +74,5 @@ def enhance_login_page(content: str) -> str:
         </footer>
       </section>
     </main>
-    <script>(function(){{var f=document.getElementById('login-v11-form'),u=document.getElementById('login-v11-user'),r=document.getElementById('login-v11-remember');if(!f||!u||!r)return;try{{var saved=localStorage.getItem('salt-login-username');if(saved){{u.value=saved;r.checked=true;}}}}catch(e){{}}f.addEventListener('submit',function(){{try{{if(r.checked){{localStorage.setItem('salt-login-username',u.value.trim());document.cookie='remember_login=1; Path=/; Max-Age={REMEMBER_SECONDS}; SameSite=Lax';}}else{{localStorage.removeItem('salt-login-username');document.cookie='remember_login=; Path=/; Max-Age=0; SameSite=Lax';}}}}catch(e){{}}}});}})();</script>'''
+    <script>(function(){{var f=document.getElementById('login-v11-form'),u=document.getElementById('login-v11-user'),r=document.getElementById('login-v11-remember'),p=document.getElementById('login-v11-password'),t=document.querySelector('.login-v11-password-toggle');if(!f||!u||!r)return;if(p&&t){{t.addEventListener('click',function(){{var showing=p.type==='text';p.type=showing?'password':'text';t.setAttribute('aria-pressed',showing?'false':'true');t.setAttribute('aria-label',showing?'Hiển thị mật khẩu':'Ẩn mật khẩu');t.setAttribute('title',showing?'Hiển thị mật khẩu':'Ẩn mật khẩu');}});}}try{{var saved=localStorage.getItem('salt-login-username');if(saved){{u.value=saved;r.checked=true;}}}}catch(e){{}}f.addEventListener('submit',function(){{try{{if(r.checked){{localStorage.setItem('salt-login-username',u.value.trim());document.cookie='remember_login=1; Path=/; Max-Age={REMEMBER_SECONDS}; SameSite=Lax';}}else{{localStorage.removeItem('salt-login-username');document.cookie='remember_login=; Path=/; Max-Age=0; SameSite=Lax';}}}}catch(e){{}}}});}})();</script>'''
     return content[:start] + page + content[end:]
