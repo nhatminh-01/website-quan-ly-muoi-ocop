@@ -838,3 +838,32 @@ a{color:var(--primary)}
 
 /* Use the approved dashboard artwork instead of approximated header shapes. */
 .site-header::before,.site-header::after{display:none!important}
+
+
+/* v1.2 sidebar group contrast fix */
+.sidebar-group summary{
+  color:#176745;
+  background:transparent;
+  font-weight:800;
+}
+.sidebar-group summary .group-label{color:#176745}
+.sidebar-group summary .group-chevron{
+  color:#287158;
+  opacity:1;
+}
+.sidebar-group summary:hover{
+  background:#eef8f2;
+  color:#0b7047;
+}
+.sidebar-group summary:hover .group-label,
+.sidebar-group summary:hover .group-chevron{color:#0b7047}
+.sidebar-group[open]>summary{
+  background:#f3faf6;
+  color:#0a6a42;
+}
+.sidebar-group[open]>summary .group-label,
+.sidebar-group[open]>summary .group-chevron{color:#0a6a42}
+.sidebar-group summary:focus-visible{
+  outline:2px solid #5aa77f;
+  outline-offset:1px;
+}
